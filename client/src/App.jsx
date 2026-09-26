@@ -81,6 +81,10 @@ function interact(key) {
   if (key === 'g') return openModal({ type: 'roster' });
   if (key === '?') return openModal({ type: 'help' });
   if (!focus) return;
+  if (focus.type === 'boss') {
+    if (key === 'e') openModal({ type: 'roster' });
+    return;
+  }
   if (focus.type === 'board') {
     if (key !== 'e') return;
     return focus.board === 'guild' ? openModal({ type: 'roster' }) : openModal({ type: 'board', kind: focus.board });

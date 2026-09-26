@@ -3,23 +3,31 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { Office } from './Office.jsx';
+import { view } from './view.js';
 import { Person, Bot } from './Characters.jsx';
 import { useGame, positions, localPlayer, sendMove } from '../net.js';
-import { ROOM, OBSTACLES, DESKS, BOARDS, DOOR, deskById } from '../../../shared/layout.js';
+import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK } from '../../../shared/layout.js';
 import { SKILL_INFO } from '../../../shared/progression.js';
 
 export const keys = new Set();
 const SPEED = 5.5;
-const RADIUS = 0.35;
 const CAM_OFFSET = new THREE.Vector3(0, 5.6, 8.2);
 const LOOK_AHEAD = 5;
+// Upstairs the camera sits a little higher and tips down over the railing.
+const CAM_OFFSET_UP = new THREE.Vector3(0, 6.2, 8.6);
+const LOOK_AHEAD_UP = 10;
 
-function blocked(x, z) {
-  if (x < ROOM.minX + RADIUS || x > ROOM.maxX - RADIUS || z < ROOM.minZ + 0.6 || z > ROOM.maxZ - RADIUS) return true;
-  return OBSTACLES.some((o) => x > o.minX - RADIUS && x < o.maxX + RADIUS && z > o.minZ - RADIUS && z < o.maxZ + RADIUS);
+
+function applyStep(nx, nz) {
+  const next = step(localPlayer, nx, nz);
+  if (next) Object.assign(localPlayer, next);
 }
 
-function findFocus(x, z) {
+function findFocus(x, z, level) {
+  if (level === 'stairs') return null;
+  if (level === 'mezz') {
+    return Math.hypot(BOSS_DESK.x - x, (BOSS_DESK.z - z) * 0.8) < 2.6 ? { type: 'boss' } : null;
+  }
   const { agents, desks } = useGame.getState();
   let best = null;
   let bestD = Infinity;
@@ -55,8 +63,11 @@ function LocalPlayer() {
   const bubble = useBubble(me?.id);
   const target = useMemo(() => new THREE.Vector3(), []);
 
+  const look = useMemo(() => new THREE.Vector3(), []);
+  const wantLook = useMemo(() => new THREE.Vector3(), []);
   useEffect(() => {
     camera.position.set(localPlayer.x + CAM_OFFSET.x, CAM_OFFSET.y, localPlayer.z + CAM_OFFSET.z);
+    look.set(localPlayer.x, 1.2, localPlayer.z - LOOK_AHEAD);
   }, [camera]);
 
   useFrame((_, dt) => {
@@ -70,31 +81,42 @@ function LocalPlayer() {
     moving.current = dx !== 0 || dz !== 0;
     if (moving.current) {
       const len = Math.hypot(dx, dz);
-      const step = (SPEED * dt) / len;
-      const nx = localPlayer.x + dx * step;
-      const nz = localPlayer.z + dz * step;
-      if (!blocked(nx, localPlayer.z)) localPlayer.x = nx;
-      if (!blocked(localPlayer.x, nz)) localPlayer.z = nz;
+      const stride = (SPEED * dt) / len;
+      applyStep(localPlayer.x + dx * stride, localPlayer.z);
+      applyStep(localPlayer.x, localPlayer.z + dz * stride);
       const want = Math.atan2(dx, dz);
       let diff = want - localPlayer.ry;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       localPlayer.ry += diff * Math.min(1, dt * 14);
-      sendMove(localPlayer.x, localPlayer.z, localPlayer.ry);
-      const focus = findFocus(localPlayer.x, localPlayer.z);
+      sendMove(localPlayer.x, localPlayer.y, localPlayer.z, localPlayer.ry);
+      const focus = findFocus(localPlayer.x, localPlayer.z, localPlayer.level);
       if (!sameFocus(focus, useGame.getState().focus)) useGame.setState({ focus });
     }
-    group.current.position.set(localPlayer.x, 0, localPlayer.z);
+    // The upper floor appears once you start up the stairs.
+    const upstairs = localPlayer.level !== 'ground';
+    if (upstairs !== view.upstairs) {
+      view.upstairs = upstairs;
+      // Page overlays (desk markers, signs) can't be hidden by 3D geometry, so CSS does it.
+      document.body.dataset.upstairs = upstairs ? '1' : '';
+    }
+    group.current.position.set(localPlayer.x, localPlayer.y, localPlayer.z);
     group.current.rotation.y = localPlayer.ry;
-    target.set(localPlayer.x + CAM_OFFSET.x, CAM_OFFSET.y, localPlayer.z + CAM_OFFSET.z);
-    camera.position.lerp(target, Math.min(1, dt * 6));
-    camera.lookAt(camera.position.x, 1.2, camera.position.z - CAM_OFFSET.z - LOOK_AHEAD);
+    const up = localPlayer.level === 'mezz';
+    const off = up ? CAM_OFFSET_UP : CAM_OFFSET;
+    target.set(localPlayer.x + off.x, localPlayer.y + off.y, localPlayer.z + off.z);
+    camera.position.lerp(target, Math.min(1, dt * 5));
+    // Upstairs, look down past the railing at the floor below.
+    if (up) wantLook.set(localPlayer.x, 0.5, localPlayer.z - LOOK_AHEAD_UP);
+    else wantLook.set(localPlayer.x, localPlayer.y + 1.2, localPlayer.z - LOOK_AHEAD);
+    look.lerp(wantLook, Math.min(1, dt * 5));
+    camera.lookAt(look);
   });
 
   // Focus can also change when the world changes around a standing player.
   const agents = useGame((s) => s.agents);
   const desks = useGame((s) => s.desks);
   useEffect(() => {
-    const focus = findFocus(localPlayer.x, localPlayer.z);
+    const focus = findFocus(localPlayer.x, localPlayer.z, localPlayer.level);
     if (!sameFocus(focus, useGame.getState().focus)) useGame.setState({ focus });
   }, [agents, desks]);
 
@@ -128,6 +150,7 @@ function RemotePlayer({ player }) {
     moving.current = dist > 0.02;
     const k = Math.min(1, dt * 10);
     g.x += (p.x - g.x) * k;
+    g.y += ((p.y || 0) - g.y) * k;
     g.z += (p.z - g.z) * k;
     let diff = p.ry - group.current.rotation.y;
     diff = Math.atan2(Math.sin(diff), Math.cos(diff));
@@ -135,7 +158,7 @@ function RemotePlayer({ player }) {
   });
   const start = positions.get(player.id) || player;
   return (
-    <group ref={group} position={[start.x, 0, start.z]}>
+    <group ref={group} position={[start.x, start.y || 0, start.z]}>
       <Person name={player.name} avatar={player.avatar} moving={moving} bubble={bubble} />
     </group>
   );

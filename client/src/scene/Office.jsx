@@ -2,7 +2,8 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { ROOM, PODS, DESKS, BOARDS, DOOR } from '../../../shared/layout.js';
+import { ROOM, PODS, DESKS, BOARDS, DOOR, MEZZ, STAIRS, COLUMNS, WALL_HEIGHT, BOSS_DESK } from '../../../shared/layout.js';
+import { view } from './view.js';
 import { useGame } from '../net.js';
 
 const W = ROOM.maxX - ROOM.minX;
@@ -251,8 +252,8 @@ export function Office() {
         <meshStandardMaterial map={planks} roughness={0.85} />
       </mesh>
       {/* back wall */}
-      <mesh position={[0, 2.5, ROOM.minZ - 0.15]} receiveShadow>
-        <boxGeometry args={[W + 0.6, 5, 0.3]} />
+      <mesh position={[0, WALL_HEIGHT / 2, ROOM.minZ - 0.15]} receiveShadow>
+        <boxGeometry args={[W + 0.6, WALL_HEIGHT, 0.3]} />
         <meshStandardMaterial color="#f5ead7" />
       </mesh>
       <mesh position={[0, 0.2, ROOM.minZ + 0.02]}>
@@ -262,8 +263,8 @@ export function Office() {
       {/* side walls */}
       {[ROOM.minX - 0.15, ROOM.maxX + 0.15].map((x) => (
         <group key={x}>
-          <mesh position={[x, 2.5, 0]} receiveShadow>
-            <boxGeometry args={[0.3, 5, D + 0.3]} />
+          <mesh position={[x, WALL_HEIGHT / 2, 0]} receiveShadow>
+            <boxGeometry args={[0.3, WALL_HEIGHT, D + 0.3]} />
             <meshStandardMaterial color="#efe2cc" />
           </mesh>
           <mesh position={[x + (x < 0 ? 0.17 : -0.17), 0.2, 0]}>
@@ -273,8 +274,8 @@ export function Office() {
         </group>
       ))}
       {/* windows */}
-      {[-15, -10.5, 10.5, 15].map((x) => (
-        <group key={x} position={[x, 3.2, ROOM.minZ + 0.02]}>
+      {[-15, -10.5, 10.5, 15].flatMap((x) => [3.2, 6.9].map((y) => [x, y])).map(([x, y]) => (
+        <group key={`${x}-${y}`} position={[x, y, ROOM.minZ + 0.02]}>
           <mesh>
             <planeGeometry args={[2.6, 1.6]} />
             <meshStandardMaterial color="#bfe3fb" emissive="#bfe3fb" emissiveIntensity={0.3} />
@@ -298,6 +299,15 @@ export function Office() {
         <Pod key={pod.id} pod={pod} occupancy={occupancy} />
       ))}
 
+      <Stairs />
+      {COLUMNS.map((c) => (
+        <mesh key={c.x} position={[c.x, MEZZ.y / 2, c.z]} castShadow>
+          <cylinderGeometry args={[c.r, c.r, MEZZ.y, 16]} />
+          <meshStandardMaterial color="#e8834a" />
+        </mesh>
+      ))}
+      <Mezzanine />
+
       <Corkboard board={provider === 'ado' ? { ...BOARDS[0], label: 'Work Items' } : BOARDS[0]} items={openIssues} />
       <Corkboard board={BOARDS[1]} items={openPrs} />
       <GuildHall board={BOARDS[2]} agents={agents} />
@@ -317,5 +327,202 @@ export function Office() {
         </mesh>
       </group>
     </group>
+  );
+}
+
+// ---------------------------------------------------------------- upper floor
+
+function Stairs() {
+  const n = 16;
+  const run = (STAIRS.z1 - STAIRS.z0) / n;
+  const rise = MEZZ.y / n;
+  const w = STAIRS.x1 - STAIRS.x0;
+  const cx = (STAIRS.x0 + STAIRS.x1) / 2;
+  const len = Math.hypot(STAIRS.z1 - STAIRS.z0, MEZZ.y);
+  const slope = Math.atan2(MEZZ.y, STAIRS.z1 - STAIRS.z0);
+  return (
+    <group>
+      {Array.from({ length: n }, (_, i) => (
+        <mesh key={i} position={[cx, ((i + 1) * rise) / 2, STAIRS.z0 + (i + 0.5) * run]} castShadow receiveShadow>
+          <boxGeometry args={[w, (i + 1) * rise, run]} />
+          <meshStandardMaterial color={i % 2 ? '#c8894f' : '#d19459'} roughness={0.8} />
+        </mesh>
+      ))}
+      {/* Glass rail on the open side */}
+      <mesh position={[STAIRS.x0, MEZZ.y / 2 + 0.55, (STAIRS.z0 + STAIRS.z1) / 2]} rotation={[-slope, 0, 0]}>
+        <boxGeometry args={[0.05, 1.1, len]} />
+        <meshStandardMaterial color="#bfe3fb" transparent opacity={0.35} />
+      </mesh>
+      <mesh position={[STAIRS.x0, MEZZ.y / 2 + 1.1, (STAIRS.z0 + STAIRS.z1) / 2]} rotation={[-slope, 0, 0]}>
+        <boxGeometry args={[0.1, 0.08, len]} />
+        <meshStandardMaterial color="#8a5a2b" />
+      </mesh>
+      <Html position={[cx, 2.3, STAIRS.z0 - 0.2]} center zIndexRange={[3, 0]} style={{ pointerEvents: 'none' }}>
+        <div className="floor-label up">↑ Boss's office</div>
+      </Html>
+    </group>
+  );
+}
+
+// Against a side wall, turned to face into the room (and toward the camera).
+function Bookshelf({ side }) {
+  const colors = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#14b8a6'];
+  return (
+    <group position={[side * 19.45, MEZZ.y, 12.3]} rotation={[0, side < 0 ? -Math.PI / 2 : Math.PI / 2, 0]}>
+      <mesh position={[0, 1.1, 0]} castShadow>
+        <boxGeometry args={[2.2, 2.2, 0.8]} />
+        <meshStandardMaterial color="#8a5a2b" />
+      </mesh>
+      {[0.45, 1.15, 1.85].map((y, row) =>
+        Array.from({ length: 8 }, (_, i) => (
+          <mesh key={`${row}-${i}`} position={[-0.85 + i * 0.24, y, -0.3]}>
+            <boxGeometry args={[0.18, 0.5 - ((i + row) % 3) * 0.06, 0.4]} />
+            <meshStandardMaterial color={colors[(i * 3 + row) % colors.length]} />
+          </mesh>
+        )),
+      )}
+    </group>
+  );
+}
+
+function BossOffice() {
+  const y = MEZZ.y;
+  const desk = BOSS_DESK;
+  return (
+    <group>
+      {/* rug */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, y + 0.012, 11.9]} receiveShadow>
+        <planeGeometry args={[12, 4]} />
+        <meshStandardMaterial color="#7c3aed" roughness={1} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, y + 0.014, 11.9]}>
+        <ringGeometry args={[1.6, 1.75, 40]} />
+        <meshStandardMaterial color="#fde68a" />
+      </mesh>
+      {/* the boss's desk, facing out over the floor */}
+      <group position={[desk.x, y, desk.z]}>
+        <mesh position={[0, 0.82, 0]} castShadow receiveShadow>
+          <boxGeometry args={[desk.w, 0.1, desk.d]} />
+          <meshStandardMaterial color="#5b3a1e" roughness={0.4} />
+        </mesh>
+        <mesh position={[0, 0.4, -desk.d / 2 + 0.05]} castShadow>
+          <boxGeometry args={[desk.w, 0.8, 0.08]} />
+          <meshStandardMaterial color="#4a2f18" />
+        </mesh>
+        {[-1, 1].map((sd) => (
+          <mesh key={sd} position={[sd * (desk.w / 2 - 0.05), 0.4, 0]} castShadow>
+            <boxGeometry args={[0.1, 0.8, desk.d]} />
+            <meshStandardMaterial color="#4a2f18" />
+          </mesh>
+        ))}
+        {[-0.55, 0.55].map((mx) => (
+          <group key={mx} position={[mx, 0.87, -0.2]} rotation={[0, mx < 0 ? 0.18 : -0.18, 0]}>
+            <mesh position={[0, 0.35, 0]}>
+              <boxGeometry args={[0.9, 0.55, 0.05]} />
+              <meshStandardMaterial color="#1f2937" />
+            </mesh>
+            <mesh position={[0, 0.35, 0.03]}>
+              <planeGeometry args={[0.82, 0.47]} />
+              <meshStandardMaterial color="#0f172a" emissive="#60a5fa" emissiveIntensity={0.35} />
+            </mesh>
+            <mesh position={[0, 0.05, 0]}>
+              <boxGeometry args={[0.08, 0.12, 0.08]} />
+              <meshStandardMaterial color="#334155" />
+            </mesh>
+          </group>
+        ))}
+        <mesh position={[0.95, 0.93, 0.25]}>
+          <cylinderGeometry args={[0.07, 0.06, 0.14, 12]} />
+          <meshStandardMaterial color="#fde68a" />
+        </mesh>
+      </group>
+      {/* executive chair, its back to us so the boss looks out over the floor */}
+      <group position={[desk.x, y, desk.z + 1.2]}>
+        <mesh position={[0, 0.55, 0]} castShadow>
+          <boxGeometry args={[0.75, 0.14, 0.7]} />
+          <meshStandardMaterial color="#111827" />
+        </mesh>
+        <mesh position={[0, 1.15, 0.32]} castShadow>
+          <boxGeometry args={[0.75, 1.1, 0.14]} />
+          <meshStandardMaterial color="#111827" />
+        </mesh>
+        <mesh position={[0, 0.25, 0]}>
+          <cylinderGeometry args={[0.05, 0.05, 0.45, 8]} />
+          <meshStandardMaterial color="#6b7280" />
+        </mesh>
+      </group>
+      <Bookshelf side={-1} />
+      <Bookshelf side={1} />
+      {/* sofa and coffee table */}
+      <group position={[-14, y, 12.85]}>
+        <mesh position={[0, 0.3, 0]} castShadow>
+          <boxGeometry args={[3, 0.45, 1]} />
+          <meshStandardMaterial color="#b45309" />
+        </mesh>
+        <mesh position={[0, 0.8, 0.4]} castShadow>
+          <boxGeometry args={[3, 0.7, 0.25]} />
+          <meshStandardMaterial color="#b45309" />
+        </mesh>
+        {[-1, 1].map((sd) => (
+          <mesh key={sd} position={[sd * 1.4, 0.55, 0]} castShadow>
+            <boxGeometry args={[0.25, 0.6, 1]} />
+            <meshStandardMaterial color="#92400e" />
+          </mesh>
+        ))}
+      </group>
+      <mesh position={[-14, y + 0.25, 11.2]} castShadow>
+        <cylinderGeometry args={[0.6, 0.6, 0.08, 24]} />
+        <meshStandardMaterial color="#f8fafc" />
+      </mesh>
+      <Plant position={[-17.8, y, 13.2]} scale={1.2} />
+      <Plant position={[17.8, y, 13.2]} scale={1.2} />
+      <Plant position={[5.6, y, 10.4]} />
+      <Html position={[desk.x, y + 1.9, desk.z - 0.7]} center zIndexRange={[3, 0]} style={{ pointerEvents: 'none' }}>
+        <div className="boss-plate">🏢 Boss's office</div>
+      </Html>
+    </group>
+  );
+}
+
+function Mezzanine() {
+  const group = useRef();
+  const ghost = useRef();
+  const depth = MEZZ.z1 - MEZZ.z0;
+  const cz = (MEZZ.z0 + MEZZ.z1) / 2;
+  const railLen = STAIRS.x0 - MEZZ.minX;
+  useFrame(({ camera }) => {
+    // Downstairs, the upper floor would sit between the camera and the floor, so
+    // it's hidden (like cutaway views in building games); a faint outline stays
+    // while the camera isn't directly above it.
+    if (group.current) group.current.visible = view.upstairs;
+    if (ghost.current) ghost.current.visible = !view.upstairs && camera.position.z < MEZZ.z0 - 0.5;
+  });
+  return (
+    <>
+      <mesh ref={ghost} position={[0, MEZZ.y - 0.15, cz]}>
+        <boxGeometry args={[W, 0.3, depth]} />
+        <meshBasicMaterial color="#c9b79c" transparent opacity={0.18} depthWrite={false} />
+      </mesh>
+      <group ref={group} visible={false}>
+        <mesh position={[0, MEZZ.y - 0.15, cz]} castShadow receiveShadow>
+          <boxGeometry args={[W, 0.3, depth]} />
+          <meshStandardMaterial color="#e9d9bf" roughness={0.9} />
+        </mesh>
+        <mesh position={[0, MEZZ.y - 0.34, MEZZ.z0 + 0.1]}>
+          <boxGeometry args={[W, 0.12, 0.2]} />
+          <meshStandardMaterial color="#e8834a" />
+        </mesh>
+        {/* glass railing over the floor, open where the stairs arrive */}
+        <mesh position={[MEZZ.minX + railLen / 2, MEZZ.y + 0.55, MEZZ.z0 + 0.05]}>
+          <boxGeometry args={[railLen, 1.1, 0.05]} />
+          <meshStandardMaterial color="#bfe3fb" transparent opacity={0.3} depthWrite={false} />
+        </mesh>
+        <mesh position={[MEZZ.minX + railLen / 2, MEZZ.y + 1.12, MEZZ.z0 + 0.05]}>
+          <boxGeometry args={[railLen, 0.08, 0.12]} />
+          <meshStandardMaterial color="#8a5a2b" />
+        </mesh>
+        <BossOffice />
+      </group>
+    </>
   );
 }

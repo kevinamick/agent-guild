@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 
 // Positions change every frame, so they live outside React state.
-export const positions = new Map(); // playerId -> { x, z, ry }
-export const localPlayer = { x: 0, z: 11, ry: Math.PI };
+export const positions = new Map(); // playerId -> { x, y, z, ry }
+export const localPlayer = { x: 0, y: 0, z: 11, ry: Math.PI, level: 'ground' };
+// Read-only position for automated UI tests (e.g. walking a scripted route).
+if (typeof window !== 'undefined') Object.defineProperty(window, '__guildPosition', { get: () => ({ ...localPlayer }) });
 const ptyListeners = new Map(); // agentId -> Set<fn>
 
 export const useGame = create(() => ({
@@ -69,11 +71,11 @@ export function send(msg) {
   if (socket?.readyState === 1) socket.send(JSON.stringify(msg));
 }
 
-export function sendMove(x, z, ry) {
+export function sendMove(x, y, z, ry) {
   const now = performance.now();
   if (now - lastSent < 70) return;
   lastSent = now;
-  send({ t: 'move', x, z, ry });
+  send({ t: 'move', x, y, z, ry });
 }
 
 export function onPty(agentId, fn) {
@@ -97,7 +99,7 @@ function addFx(fx) {
 function applyState(state) {
   const agents = Object.fromEntries(state.agents.map((a) => [a.id, a]));
   for (const p of state.players) {
-    if (!positions.has(p.id)) positions.set(p.id, { x: p.x, z: p.z, ry: p.ry });
+    if (!positions.has(p.id)) positions.set(p.id, { x: p.x, y: p.y || 0, z: p.z, ry: p.ry });
   }
   const ids = new Set(state.players.map((p) => p.id));
   for (const id of positions.keys()) if (!ids.has(id)) positions.delete(id);
@@ -137,9 +139,9 @@ function handle(msg) {
       applyState(msg.state);
       break;
     case 'pos':
-      for (const [id, x, z, ry] of msg.list) {
+      for (const [id, x, z, ry, y = 0] of msg.list) {
         if (id === useGame.getState().me) continue;
-        positions.set(id, { x, z, ry });
+        positions.set(id, { x, y, z, ry });
       }
       break;
     case 'chat':

@@ -133,6 +133,14 @@ export function InteractionBar() {
       </div>
     );
   }
+  if (focus.type === 'boss')
+    return (
+      <div className="interaction panel">
+        <span className="focus-name">🏢 Boss's desk</span>
+        <span className="muted small">the whole floor at a glance</span>
+        <Key k="E">Guild overview</Key>
+      </div>
+    );
   if (focus.type === 'desk')
     return (
       <div className="interaction panel">

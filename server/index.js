@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { DESKS, deskById, nearestFreeDesk } from '../shared/layout.js';
+import { DESKS, deskById, nearestFreeDesk, MEZZ } from '../shared/layout.js';
 import { createKeyStore } from './keys.js';
 import { sanitizeAvatar, randomAvatar } from '../shared/avatar.js';
 import {
@@ -142,7 +142,7 @@ function createOffice(officeId, officeName, dataDir) {
   function snapshot() {
     return {
       office: { id: officeId, name: officeName, repo: firstRunner()?.repo || null, provider: firstRunner()?.provider || null },
-      players: [...players.values()].map(({ id, name, color, avatar, x, z, ry }) => ({ id, name, color, avatar, x, z, ry })),
+      players: [...players.values()].map(({ id, name, color, avatar, x, y, z, ry }) => ({ id, name, color, avatar, x, y, z, ry })),
       runners: [...runners.values()].filter((r) => r.ready).map(({ id, owner, repo, lend, engines }) => ({ id, owner, repo, lend, engines })),
       agents: [...profiles.keys()].map(agentView),
       desks: Object.fromEntries(desks),
@@ -331,6 +331,7 @@ function createOffice(officeId, officeName, dataDir) {
     switch (msg.t) {
       case 'move':
         player.x = +msg.x || 0;
+        player.y = Math.min(MEZZ.y, Math.max(0, +msg.y || 0));
         player.z = +msg.z || 0;
         player.ry = +msg.ry || 0;
         player.moved = true;
@@ -681,7 +682,7 @@ function createOffice(officeId, officeName, dataDir) {
     const moved = [...players.values()].filter((p) => p.moved);
     if (!moved.length) return;
     for (const p of moved) p.moved = false;
-    broadcast({ t: 'pos', list: moved.map(({ id, x, z, ry }) => [id, +x.toFixed(2), +z.toFixed(2), +ry.toFixed(2)]) });
+    broadcast({ t: 'pos', list: moved.map(({ id, x, y, z, ry }) => [id, +x.toFixed(2), +z.toFixed(2), +ry.toFixed(2), +(y || 0).toFixed(2)]) });
   }, 80);
 
   return {
