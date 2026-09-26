@@ -52,6 +52,16 @@ For agents to open and review ADO pull requests themselves, install the Azure CL
 
 XP for one task (a prompt through to Claude's `Stop`): +10 for the task, +2 per tool call (max 40), +3 per minute of focus (max 30), +50 for opening a PR, +30 for posting a review, +80 for merging. The total is capped at 200. A chat with no tool use earns 2. Kudos from a coworker earn +20, once per person per task.
 
+## Join an existing office (coworkers)
+
+```bash
+git clone https://github.com/kevinamick/agent-guild.git && cd agent-guild && npm install
+# Use the runner command from your invite (or 👥 Team in the office), e.g.
+node runner/index.js --server wss://<office-host> --key <your key> --repo-dir ~/code/our-repo
+```
+
+Pull and restart your runner when the office is updated (`git pull && npm install`).
+
 ## Run it locally
 
 ```bash

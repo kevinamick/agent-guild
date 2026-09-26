@@ -591,7 +591,7 @@ export function TeamModal() {
       <div className="modal-body">
         <h4 className="section-title">Host your own agents</h4>
         <p className="muted small">
-          Run this in a clone of Agent Guild (<code>npm install</code> first). Your agents run on your machine with your Claude login, in your checkout of the team repo.
+          Run this in a clone of <a href="https://github.com/kevinamick/agent-guild" target="_blank" rel="noreferrer">Agent Guild</a> (<code>npm install</code> first). Your agents run on your machine with your Claude login, in your checkout of the team repo.
         </p>
         {links && <Copyable label="Runner command" value={links.runnerCmd.replace('<your key>', myKey)} secret />}
 
