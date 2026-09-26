@@ -74,7 +74,9 @@ if (opts.version) {
 
 const REPO_DIR = path.resolve(opts['repo-dir']);
 const HOME = opts.home;
-const AGENTS_DIR = path.join(HOME, 'agents');
+// Agents are kept per office (set once the server says which office this key is for).
+let AGENTS_DIR = null;
+let officeId = null;
 const CONFIG_FILE = path.join(HOME, 'config.json');
 fs.mkdirSync(HOME, { recursive: true });
 
@@ -140,7 +142,6 @@ const SCROLLBACK_LIMIT = 128 * 1024;
 let ownerName = '?';
 // Messages that must not be lost while the office link is down (XP, lessons, exits).
 const outbox = [];
-fs.mkdirSync(AGENTS_DIR, { recursive: true });
 
 /** agentId -> { term, cwd, worktree, turn, flushBuf, flushTimer } */
 const sessions = new Map();
@@ -154,6 +155,7 @@ const log = (...a) => console.log(new Date().toLocaleTimeString(), ...a);
 const agentDir = (id) => path.join(AGENTS_DIR, id);
 
 function loadLocalAgents() {
+  if (!AGENTS_DIR) return [];
   return fs.readdirSync(AGENTS_DIR).flatMap((id) => {
     try {
       const a = JSON.parse(fs.readFileSync(path.join(agentDir(id), 'agent.json'), 'utf8'));
@@ -400,6 +402,9 @@ async function onMessage(msg) {
     case 'prompt':
       if (sessions.get(msg.agentId) && msg.meta) sessions.get(msg.agentId).meta = msg.meta;
       return promptAgent(msg.agentId, msg.text);
+    case 'office':
+      useOffice(msg.id, msg.name);
+      return sendHello(ws.repo);
     case 'welcome':
       ownerName = msg.owner;
       log(`signed in as ${ownerName}${opts.private ? ' (private)' : ' (lending agents to coworkers)'}. Keep this window open while you're hosting agents.`);
@@ -423,6 +428,35 @@ async function onMessage(msg) {
   }
 }
 
+function useOffice(id, name) {
+  if (officeId === id) return;
+  if (officeId && sessions.size) {
+    // The same runner can't serve two offices at once; stop the old office's agents.
+    for (const agentId of [...sessions.keys()]) killAgent(agentId);
+  }
+  officeId = id;
+  AGENTS_DIR = path.join(HOME, 'offices', id, 'agents');
+  // Before offices existed, agents lived in ~/.agent-guild/agents. They belonged to
+  // the only office there was, so the first office this runner joins adopts them.
+  const legacy = path.join(HOME, 'agents');
+  if (fs.existsSync(legacy) && !fs.existsSync(path.join(HOME, 'offices'))) {
+    fs.mkdirSync(path.dirname(AGENTS_DIR), { recursive: true });
+    fs.renameSync(legacy, AGENTS_DIR);
+    log(`moved your existing agents into office "${name}"`);
+  }
+  fs.mkdirSync(AGENTS_DIR, { recursive: true });
+  log(`office: ${name}; agents live in ${AGENTS_DIR}`);
+}
+
+// Sessions survive a dropped link; hand them back so their desks are kept.
+function sendHello(repo) {
+  const live = [...sessions.entries()].map(([agentId, s]) => ({
+    agentId, deskId: s.deskId, meta: s.meta, engine: s.engine, status: s.status, activity: s.activity, scrollback: s.scrollback,
+  }));
+  const engines = Object.entries(ENGINES).map(([id, a]) => ({ id, label: a.label }));
+  ws.send(JSON.stringify({ t: 'hello', repo, provider: provider?.type || null, lend: !opts.private, engines, agents: loadLocalAgents(), sessions: live }));
+}
+
 async function connect(repo, attempt = 0) {
   const url = `${opts.server.replace(/\/$/, '')}/ws?role=runner&key=${encodeURIComponent(opts.key)}`;
   const sock = new WebSocket(url);
@@ -430,13 +464,8 @@ async function connect(repo, attempt = 0) {
   sock.on('open', () => {
     attempt = 0;
     log(`connected to ${opts.server}`);
-    // Sessions survive a dropped link; hand them back so their desks are kept.
-    const live = [...sessions.entries()].map(([agentId, s]) => ({
-      agentId, deskId: s.deskId, meta: s.meta, engine: s.engine, status: s.status, activity: s.activity, scrollback: s.scrollback,
-    }));
-    const engines = Object.entries(ENGINES).map(([id, a]) => ({ id, label: a.label }));
-    sock.send(JSON.stringify({ t: 'hello', repo, provider: provider?.type || null, lend: !opts.private, engines, agents: loadLocalAgents(), sessions: live }));
   });
+  sock.repo = repo;
   sock.on('message', (raw) => onMessage(JSON.parse(raw)).catch((e) => log('error', e.message)));
   sock.on('close', (code) => {
     if (code === 4001) {
@@ -462,7 +491,7 @@ function shutdown() {
 hookServer.listen(0, '127.0.0.1', async () => {
   hookPort = hookServer.address().port;
   const repo = await detectRepo();
-  log(`runner in ${REPO_DIR}${repo ? ` (${provider.type === 'ado' ? 'Azure DevOps' : 'GitHub'}: ${repo})` : ''}; engines: ${Object.values(ENGINES).map((a) => a.label).join(', ')}; agents live in ${AGENTS_DIR}`);
+  log(`runner in ${REPO_DIR}${repo ? ` (${provider.type === 'ado' ? 'Azure DevOps' : 'GitHub'}: ${repo})` : ''}; engines: ${Object.values(ENGINES).map((a) => a.label).join(', ')}`);
   connect(repo);
 });
 

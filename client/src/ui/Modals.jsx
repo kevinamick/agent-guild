@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useGame, send, openModal, closeModal } from '../net.js';
+import { useGame, send, openModal, closeModal, signOut } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { LevelBadge, XpBar, SkillChips, EngineChip } from './Hud.jsx';
 import { useHost } from '../host.js';
@@ -565,6 +565,8 @@ function Copyable({ label, value, secret }) {
 
 export function TeamModal() {
   const admin = useGame((s) => s.admin);
+  const owner = useGame((s) => s.owner);
+  const office = useGame((s) => s.office);
   const members = useGame((s) => s.members);
   const invite = useGame((s) => s.invite);
   const links = useGame((s) => s.myLinks);
@@ -574,8 +576,9 @@ export function TeamModal() {
   useEffect(() => {
     send({ t: 'my-links' });
     if (admin) send({ t: 'members' });
-    return () => useGame.setState({ invite: null });
-  }, [admin]);
+    if (owner) send({ t: 'offices' });
+    return () => useGame.setState({ invite: null, newOffice: null });
+  }, [admin, owner]);
   const myKey = (() => {
     try {
       return JSON.parse(localStorage.getItem('guild-login') || '{}').key || '';
@@ -587,7 +590,7 @@ export function TeamModal() {
   const hosting = (n) => runners.some((r) => r.owner === n);
 
   return (
-    <Modal title="👥 Team">
+    <Modal title={`👥 Team · ${office.name}`}>
       <div className="modal-body">
         <h4 className="section-title">Host your own agents</h4>
         <p className="muted small">
@@ -639,7 +642,59 @@ export function TeamModal() {
             </table>
           </>
         )}
+
+        {owner && <OfficesSection />}
+      </div>
+      <div className="modal-foot">
+        <span className="muted small">Signed in to {office.name}. To switch offices, sign out and use that office's key or join link.</span>
+        <span className="grow" />
+        <button className="btn" onClick={signOut}>Sign out</button>
       </div>
     </Modal>
+  );
+}
+
+// Only the deployment owner sees this (the server enforces it too).
+function OfficesSection() {
+  const list = useGame((s) => s.officeList);
+  const created = useGame((s) => s.newOffice);
+  const myName = useGame((s) => s.myName);
+  const [name, setName] = useState('');
+  const [adminName, setAdminName] = useState(myName);
+  return (
+    <>
+      <h4 className="section-title">Offices on this deployment <span className="muted small">only you can see and create these</span></h4>
+      <table className="roster">
+        <tbody>
+          {(list || []).map((o) => (
+            <tr key={o.id}>
+              <td><b>{o.name}</b> <span className="muted small">{o.id}</span></td>
+              <td className="muted small">{o.members} member{o.members === 1 ? '' : 's'} · {o.agents} agent{o.agents === 1 ? '' : 's'}</td>
+              <td className="muted small">{o.players ? `🟢 ${o.players} in` : '⚪ empty'}{o.runners ? ` · 🖥️ ${o.runners} runner${o.runners > 1 ? 's' : ''}` : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <form
+        className="copy-row"
+        style={{ marginTop: 8 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim() && adminName.trim()) send({ t: 'create-office', name: name.trim(), adminName: adminName.trim() });
+          setName('');
+        }}
+      >
+        <input className="input" value={name} maxLength={40} placeholder="New office name" onChange={(e) => setName(e.target.value)} />
+        <input className="input" value={adminName} maxLength={24} placeholder="Its first admin" onChange={(e) => setAdminName(e.target.value)} />
+        <button className="btn primary">Create office</button>
+      </form>
+      {created && (
+        <div className="invite-box">
+          <b>Created “{created.office.name}”.</b> <span className="muted small">{created.adminName} is its admin. This key is shown only once.</span>
+          <Copyable label={`Join link for ${created.adminName} (opens the new office signed in)`} value={created.joinUrl} secret />
+          <Copyable label="Runner command (run on the PC that will host this office's agents, inside the repo)" value={created.runnerCmd} secret />
+        </div>
+      )}
+    </>
   );
 }

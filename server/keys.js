@@ -1,9 +1,11 @@
 // Personal access keys. A key is the whole identity: the name a player or runner
-// appears as comes from the key, never from the client. Only hashes are stored.
+// appears as, and the office they belong to, come from the key, never from the
+// client. Only hashes are stored.
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 
 const hash = (key) => crypto.createHash('sha256').update(String(key)).digest('hex');
+const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 
 export function createKeyStore(file) {
   let keys = {};
@@ -14,30 +16,45 @@ export function createKeyStore(file) {
     fs.writeFileSync(file + '.tmp', JSON.stringify(keys, null, 2), { mode: 0o600 });
     fs.renameSync(file + '.tmp', file);
   };
+  // Keys created before offices existed belong to the first office.
+  const officeOf = (k) => k.office || 'main';
   return {
     isEmpty: () => Object.keys(keys).length === 0,
-    lookup: (key) => (key ? keys[hash(key)] || null : null),
-    ensure(key, name, admin = false) {
-      if (!keys[hash(key)]) {
-        keys[hash(key)] = { name, admin, createdAt: Date.now() };
+    lookup(key) {
+      const k = key ? keys[hash(key)] : null;
+      return k ? { ...k, office: officeOf(k), owner: Boolean(k.owner) } : null;
+    },
+    // Idempotent: also upgrades an existing key's flags (e.g. marking the owner).
+    ensure(key, name, admin = false, { owner = false, office = 'main' } = {}) {
+      const h = hash(key);
+      const next = { createdAt: Date.now(), ...keys[h], name, admin, owner, office };
+      if (JSON.stringify(next) !== JSON.stringify(keys[h])) {
+        keys[h] = next;
         save();
       }
     },
-    issue(name, admin = false) {
+    issue(name, admin = false, office = 'main', { owner = false } = {}) {
       const key = `ag_${crypto.randomBytes(18).toString('base64url')}`;
-      keys[hash(key)] = { name, admin, createdAt: Date.now() };
+      keys[hash(key)] = { name, admin, owner, office, createdAt: Date.now() };
       save();
       return key;
     },
-    revoke(name) {
-      const before = Object.keys(keys).length;
-      for (const [h, k] of Object.entries(keys)) if (k.name.toLowerCase() === name.toLowerCase() && !k.admin) delete keys[h];
-      save();
-      return before - Object.keys(keys).length;
+    // Never revokes the owner, and only within one office.
+    revoke(name, office = 'main') {
+      let removed = 0;
+      for (const [h, k] of Object.entries(keys)) {
+        if (officeOf(k) === office && sameName(k.name, name) && !k.owner && !k.admin) {
+          delete keys[h];
+          removed++;
+        }
+      }
+      if (removed) save();
+      return removed;
     },
-    members() {
+    members(office = 'main') {
       const byName = new Map();
       for (const k of Object.values(keys)) {
+        if (officeOf(k) !== office) continue;
         const m = byName.get(k.name) || { name: k.name, admin: false, keys: 0, createdAt: k.createdAt };
         m.admin ||= k.admin;
         m.keys++;

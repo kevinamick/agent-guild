@@ -120,6 +120,37 @@ async function main() {
   const xp2 = await alice.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'review', 'review xp', 20000);
   check(xp2.from === 'Alice', `Alice borrowed Kevin's agent; it earned ${xp2.amount} review XP`);
 
+  // --- a second office: owner-only creation, and nothing crosses between offices
+  alice.send({ t: 'create-office', name: 'Sneaky', adminName: 'Alice' });
+  await alice.wait((m) => m.t === 'error' && /owner/.test(m.text), 'non-owner cannot create offices');
+  check(true, 'a non-owner cannot create an office');
+  kevin.send({ t: 'create-office', name: 'Lab', adminName: 'Lee' });
+  const lab = await kevin.wait((m) => m.t === 'office-created', 'office created');
+  check(lab.office.id === 'lab' && lab.runnerCmd.includes(lab.key), 'the owner created office "Lab" with an admin key for Lee');
+  const lee = player(lab.key);
+  await lee.ready;
+  const leeWelcome = await lee.wait((m) => m.t === 'welcome', 'lee welcome');
+  check(leeWelcome.state.office.name === 'Lab' && leeWelcome.me.admin && !leeWelcome.me.owner, 'Lee walks into Lab as its admin (not owner)');
+  check(leeWelcome.state.players.length === 1 && leeWelcome.state.agents.length === 0 && leeWelcome.state.runners.length === 0, "Lab sees none of the main office's people, agents or runners");
+  lee.send({ t: 'create-office', name: 'Another', adminName: 'Lee' });
+  await lee.wait((m) => m.t === 'error' && /owner/.test(m.text), 'office admin cannot create offices');
+  check(true, "an office's own admin cannot create offices either");
+  KEYS.Lee = lab.key;
+  startRunner('Lee');
+  await lee.wait((m) => m.t === 'state' && m.state.runners.some((r) => r.owner === 'Lee'), 'lab runner online');
+  await sleep(300);
+  check(!kevin.state.runners.some((r) => r.owner === 'Lee'), "Lee's runner shows up only in Lab");
+  lee.send({ t: 'chat', text: 'lab-only secret' });
+  await lee.wait((m) => m.t === 'chat' && m.entry.text === 'lab-only secret', 'lab chat');
+  await sleep(300);
+  check(!kevin.events.some((m) => m.t === 'chat' && m.entry.text === 'lab-only secret'), 'chat in Lab never reaches the main office');
+  lee.send({ t: 'hire', deskId: 1, task: { text: 'fix issue #9 and open a pr', kind: 'issue' } });
+  const labXp = await lee.wait((m) => m.t === 'event' && m.kind === 'xp', 'lab agent xp', 20000);
+  check(labXp.amount > 0 && !kevin.events.some((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === labXp.agentId), "Lab's agent earns XP in Lab only");
+  kevin.send({ t: 'revoke', name: 'Lee' });
+  await sleep(300);
+  check(lee.closed === null, "revoking 'Lee' from the main office doesn't touch Lab's Lee");
+
   // --- server restart with the agent still at its desk
   alice.send({ t: 'sub', agentId });
   server.kill('SIGKILL');
@@ -139,6 +170,10 @@ async function main() {
   kevin2.send({ t: 'prompt', agentId, text: 'one more task', kind: 'general' });
   const xp3 = await kevin2.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'general', 'xp after restart', 20000);
   check(xp3.amount > 0, 'the restored session still takes prompts and earns XP');
+  const lee2 = player(KEYS.Lee);
+  await lee2.ready;
+  const lw = await lee2.wait((m) => m.t === 'welcome', 'lab after restart');
+  check(lw.state.office.name === 'Lab', 'Lab and its key survive the restart');
   kevin2.send({ t: 'dismiss', agentId });
   await sleep(300);
 }

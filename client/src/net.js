@@ -11,6 +11,9 @@ export const useGame = create(() => ({
   me: null,
   myName: '',
   admin: false,
+  owner: false,
+  officeList: null,
+  newOffice: null,
   members: null,
   invite: null,
   myLinks: null,
@@ -107,7 +110,7 @@ function handle(msg) {
       retry = 0;
       applyState(msg.state);
       const first = useGame.getState().status !== 'reconnecting';
-      useGame.setState({ status: 'online', me: msg.you, myName: msg.me.name, admin: msg.me.admin, chat: msg.chat });
+      useGame.setState({ status: 'online', me: msg.you, myName: msg.me.name, admin: msg.me.admin, owner: Boolean(msg.me.owner), chat: msg.chat });
       // First visit: open the character creator.
       if (first && !msg.me.avatarChosen) useGame.setState({ modal: { type: 'character', first: true } });
       // After a reconnect, pick the open terminal's stream back up.
@@ -123,6 +126,12 @@ function handle(msg) {
       break;
     case 'my-links':
       useGame.setState({ myLinks: msg });
+      break;
+    case 'offices':
+      useGame.setState({ officeList: msg.offices });
+      break;
+    case 'office-created':
+      useGame.setState({ newOffice: msg });
       break;
     case 'state':
       applyState(msg.state);
@@ -168,4 +177,16 @@ function handle(msg) {
 }
 
 export const openModal = (modal) => useGame.setState({ modal });
+
+// Forget this browser's key and return to the sign-in screen (to switch offices).
+export function signOut() {
+  try {
+    localStorage.removeItem('guild-login');
+  } catch {}
+  creds = null;
+  const sock = socket;
+  socket = null;
+  sock?.close();
+  useGame.setState({ status: 'idle', error: null, modal: null, me: null, agents: {}, players: [], desks: {}, boards: {} });
+}
 export const closeModal = () => useGame.setState({ modal: null });
