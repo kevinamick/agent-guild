@@ -30,8 +30,8 @@ const { values: opts } = parseArgs({
     // Where people open the office (for invite links) and where runners connect.
     'client-url': { type: 'string', default: process.env.GUILD_CLIENT_URL || '' },
     'public-url': { type: 'string', default: process.env.GUILD_PUBLIC_URL || '' },
-    // What coworkers run to host agents (an npx-able package spec).
-    'runner-package': { type: 'string', default: process.env.GUILD_RUNNER_PACKAGE || 'github:kevinamick/agent-guild' },
+    // What coworkers run to host agents: a package npx can fetch (the repo's latest tarball).
+    'runner-package': { type: 'string', default: process.env.GUILD_RUNNER_PACKAGE || 'https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz' },
   },
 });
 
@@ -698,7 +698,7 @@ function inviteLinks(key) {
   const k = key || '<your key>';
   return {
     joinUrl: key ? `${client}/#key=${key}` : client,
-    runnerCmd: `npx -y ${opts['runner-package']} --server ${pub} --key ${k}`,
+    runnerCmd: `npx -y --package ${opts['runner-package']} agent-guild --server ${pub} --key ${k}`,
   };
 }
 

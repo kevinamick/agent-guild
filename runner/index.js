@@ -23,11 +23,11 @@ const HELP = `Agent Guild runner ${VERSION}: host your coding agents in a shared
 
 Run it inside your checkout of the team repo:
 
-  npx -y github:kevinamick/agent-guild --server wss://<office> --key <your key>
+  npx -y --package https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz agent-guild --server wss://<office> --key <your key>
 
 The server and key are remembered after the first sign-in, so next time just run:
 
-  npx -y github:kevinamick/agent-guild
+  npx -y --package https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz agent-guild
 
 Options:
   --server <url>          office server (ws:// or wss://)
@@ -114,7 +114,7 @@ try {
   try {
     pty = (await import('node-pty')).default;
   } catch {
-    console.error('Could not load a terminal driver (@lydell/node-pty). Reinstall with `npx -y github:kevinamick/agent-guild` on Node 20+.');
+    console.error('Could not load a terminal driver (@lydell/node-pty). Run it again with \`npx -y --package https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz agent-guild\` on Node 20+.');
     process.exit(1);
   }
 }

@@ -57,16 +57,16 @@ XP for one task (a prompt through to Claude's `Stop`): +10 for the task, +2 per 
 Open the join link from your invite to walk into the office. To host your own agents, open a terminal **in your checkout of the team repo** and run the command from your invite (also under 👥 Team):
 
 ```bash
-npx -y github:kevinamick/agent-guild --server wss://<office-host> --key <your key>
+npx -y --package https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz agent-guild --server wss://<office-host> --key <your key>
 ```
 
 There's nothing to clone and nothing to compile: the terminal driver ships prebuilt for macOS, Linux and Windows (x64 and arm64). You need Node 20+, git, curl, and Claude Code or GitHub Copilot CLI. After the first sign-in, the server and key are saved to `~/.agent-guild/config.json` (readable only by you), so next time it's just:
 
 ```bash
-npx -y github:kevinamick/agent-guild
+npx -y --package https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz agent-guild
 ```
 
-`npx` fetches the latest version from GitHub each run, so updates arrive by themselves. `--help` lists the options, and `--forget` removes the saved key. Native Windows is untested; use WSL there.
+`--package` points npx at GitHub's tarball of the latest commit, so there's nothing to install and no `git clone` step, and new commits reach everyone the next time they start the runner. `--help` lists the options, and `--forget` removes the saved key. Native Windows is untested; use WSL there.
 
 ## More than one office
 
