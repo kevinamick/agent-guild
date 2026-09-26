@@ -1,0 +1,8 @@
+node_modules
+client/dist
+data
+.agent-guild
+*.log
+Dockerfile
+fly.toml
+.deploy

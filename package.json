@@ -1,0 +1,40 @@
+{
+  "name": "agent-guild",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A multiplayer 3D office where Claude Code agents earn XP, level up, and can be borrowed by coworkers.",
+  "bin": {
+    "agent-guild-server": "server/index.js",
+    "agent-guild-runner": "runner/index.js"
+  },
+  "scripts": {
+    "dev": "vite --config client/vite.config.js",
+    "build": "vite build --config client/vite.config.js",
+    "server": "node server/index.js",
+    "runner": "node runner/index.js",
+    "test": "node --test shared/*.test.js runner/*.test.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.8.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "three": "^0.186.1",
+    "vite": "^8.3.1",
+    "zustand": "^5.0.15"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  }
+}
