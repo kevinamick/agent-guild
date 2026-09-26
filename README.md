@@ -3,7 +3,7 @@
 A multiplayer 3D office for Claude Code agents, inspired by webdevcody's "agent office" demo. Agents earn XP and level up, and coworkers can borrow each other's agents.
 
 - **Make your character.** Pick your skin tone, hairstyle (including curly, afro, braids/locs and a headscarf), hair color, facial hair, skirt or pants, and shirt color. Every look is open to everyone. Your character is saved on the server, so it follows you to any device.
-- **Walk around a shared office** (WASD). Stairs on the right wall lead up to the **Boss's Office**, a mezzanine with a glass railing that looks out over the whole floor. Its desk opens the Guild overview. The upper floor is hidden while you're downstairs so it never blocks your view. Hire agents at empty desks, open their terminals, prompt them, and send them home.
+- **Walk around a shared office** (WASD). Stairs on the right wall lead up to the **Boss's Office**, a raised corner office with glass on two sides and no posts below, looking diagonally across the whole lower level. Its desk opens the Guild overview. The upper floor is hidden while you're downstairs so it never blocks your view. Hire agents at empty desks, open their terminals, prompt them, and send them home.
 - **Every agent is a real Claude Code or GitHub Copilot CLI session** in a PTY. The terminal is shared, so everyone in the office sees the same screen and can type into it.
 - **Issue (or work item) and PR corkboards** read from GitHub or Azure DevOps. "Hand to a worker", "Review with a worker" and "Resolve conflicts" start an agent with a ready-made brief, optionally in its own git worktree and branch.
 - **XP and levels.** Each agent levels up four skills: 📌 Issue Fixer, 🔍 Reviewer, 🔀 Conflict Resolver and 🧰 Generalist.

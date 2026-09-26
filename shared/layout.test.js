@@ -33,9 +33,10 @@ test('halfway up the stairs you are halfway up', () => {
 test('no stepping onto the stairs from the side, and no walking off the balcony', () => {
   const side = { x: STAIRS.x0 - 0.6, z: 5, y: 0, level: 'ground' };
   assert.equal(step(side, STAIRS.x0 + 0.5, 5), null);
-  const balcony = { x: 0, z: MEZZ.z0 + 0.5, y: MEZZ.y, level: 'mezz' };
-  assert.equal(step(balcony, 0, MEZZ.z0 + 0.2), null, 'railing');
-  assert.equal(step(balcony, 0, MEZZ.z1), null, 'front edge');
+  const office = { x: 12, z: MEZZ.z0 + 0.5, y: MEZZ.y, level: 'mezz' };
+  assert.equal(step(office, 12, MEZZ.z0 + 0.2), null, 'front railing');
+  assert.equal(step(office, 12, MEZZ.z1), null, 'front edge');
+  assert.equal(step(office, MEZZ.minX + 0.2, office.z), null, 'side railing');
 });
 
 test('walking under the mezzanine stays on the ground', () => {

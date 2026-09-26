@@ -13,9 +13,13 @@ export const keys = new Set();
 const SPEED = 5.5;
 const CAM_OFFSET = new THREE.Vector3(0, 5.6, 8.2);
 const LOOK_AHEAD = 5;
-// Upstairs the camera sits a little higher and tips down over the railing.
-const CAM_OFFSET_UP = new THREE.Vector3(0, 6.2, 8.6);
-const LOOK_AHEAD_UP = 10;
+// Upstairs the camera rises into the corner and looks diagonally across the
+// whole lower level, a little wider (kept inside the right wall so it can't clip it).
+const CAM_OFFSET_UP = new THREE.Vector3(3.5, 7.4, 7.2);
+const CAM_MAX_X_UP = 19.3;
+const LOOK_UP = { dx: -10, y: 0.3, dz: -13 };
+const FOV = 55;
+const FOV_UP = 62;
 
 
 function applyStep(nx, nz) {
@@ -104,12 +108,17 @@ function LocalPlayer() {
     const up = localPlayer.level === 'mezz';
     const off = up ? CAM_OFFSET_UP : CAM_OFFSET;
     target.set(localPlayer.x + off.x, localPlayer.y + off.y, localPlayer.z + off.z);
+    if (up) target.x = Math.min(target.x, CAM_MAX_X_UP);
     camera.position.lerp(target, Math.min(1, dt * 5));
-    // Upstairs, look down past the railing at the floor below.
-    if (up) wantLook.set(localPlayer.x, 0.5, localPlayer.z - LOOK_AHEAD_UP);
+    if (up) wantLook.set(localPlayer.x + LOOK_UP.dx, LOOK_UP.y, localPlayer.z + LOOK_UP.dz);
     else wantLook.set(localPlayer.x, localPlayer.y + 1.2, localPlayer.z - LOOK_AHEAD);
     look.lerp(wantLook, Math.min(1, dt * 5));
     camera.lookAt(look);
+    const fov = up ? FOV_UP : FOV;
+    if (Math.abs(camera.fov - fov) > 0.05) {
+      camera.fov += (fov - camera.fov) * Math.min(1, dt * 4);
+      camera.updateProjectionMatrix();
+    }
   });
 
   // Focus can also change when the world changes around a standing player.

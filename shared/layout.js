@@ -46,19 +46,17 @@ export function nearestFreeDesk(occupied, from = DOOR) {
 export const OBSTACLES = PODS.map((p) => ({ minX: p.x - 2.1, maxX: p.x + 2.1, minZ: p.z - 1.25, maxZ: p.z + 1.25 }));
 
 // ---------------------------------------------------------------- upper floor
-// A mezzanine along the front of the building holds the boss's office and looks
-// out over the main floor. Stairs run up the right-hand wall.
-export const MEZZ = { y: 4, z0: 9.5, z1: 14, minX: ROOM.minX, maxX: ROOM.maxX };
+// The boss's office is a raised corner office over the front-right corner,
+// cantilevered (no posts), with glass on its two open sides so the whole lower
+// level is in view. Stairs run up the right-hand wall into it.
+export const MEZZ = { y: 4, z0: 9.5, z1: 14, minX: 10.5, maxX: ROOM.maxX };
 export const STAIRS = { x0: 17.4, x1: 19.6, z0: 1, z1: MEZZ.z0 };
 export const WALL_HEIGHT = 9;
-export const COLUMNS = [-15, -5, 5, 15].map((x) => ({ x, z: MEZZ.z0, r: 0.18 }));
-export const BOSS_DESK = { x: 0, z: 11.4, w: 3.4, d: 1.3 };
+export const BOSS_DESK = { x: 14.2, z: 11.3, w: 3.2, d: 1.3 };
 
 const MEZZ_OBSTACLES = [
   { minX: BOSS_DESK.x - BOSS_DESK.w / 2, maxX: BOSS_DESK.x + BOSS_DESK.w / 2, minZ: BOSS_DESK.z - BOSS_DESK.d / 2, maxZ: BOSS_DESK.z + BOSS_DESK.d / 2 },
-  { minX: -19.9, maxX: -19.0, minZ: 11.2, maxZ: 13.4 }, // bookshelf, left wall
   { minX: 19.0, maxX: 19.9, minZ: 11.2, maxZ: 13.4 }, // bookshelf, right wall
-  { minX: -15.5, maxX: -12.5, minZ: 12.2, maxZ: 13.5 }, // sofa
 ];
 
 const R = 0.35;
@@ -93,6 +91,5 @@ export function step(p, nx, nz) {
   }
   if (nx < ROOM.minX + R || nx > ROOM.maxX - R || nz < ROOM.minZ + 0.6 || nz > ROOM.maxZ - R) return null;
   if (OBSTACLES.some((o) => hits(nx, nz, o))) return null;
-  if (COLUMNS.some((c) => Math.hypot(nx - c.x, nz - c.z) < c.r + R)) return null;
   return { x: nx, z: nz, y: 0, level: 'ground' };
 }
