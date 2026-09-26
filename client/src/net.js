@@ -78,6 +78,22 @@ export function sendMove(x, y, z, ry) {
   send({ t: 'move', x, y, z, ry });
 }
 
+// WebRTC signaling relay. Features share it by tagging messages with a channel
+// (e.g. { channel: 'voice', ... } or { channel: 'tv', ... }); only players in
+// the same office can reach each other.
+const rtcListeners = new Set();
+export function onRtc(fn) {
+  rtcListeners.add(fn);
+  return () => rtcListeners.delete(fn);
+}
+export function sendRtc(to, data) {
+  send({ t: 'rtc', to, data });
+}
+// RTCPeerConnection config from the server (STUN/TURN), for every WebRTC feature.
+export function rtcConfig() {
+  return { iceServers: useGame.getState().rtc?.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }] };
+}
+
 export function onPty(agentId, fn) {
   if (!ptyListeners.has(agentId)) ptyListeners.set(agentId, new Set());
   ptyListeners.get(agentId).add(fn);
@@ -112,7 +128,7 @@ function handle(msg) {
       retry = 0;
       applyState(msg.state);
       const first = useGame.getState().status !== 'reconnecting';
-      useGame.setState({ status: 'online', me: msg.you, myName: msg.me.name, admin: msg.me.admin, owner: Boolean(msg.me.owner), chat: msg.chat });
+      useGame.setState({ status: 'online', me: msg.you, myName: msg.me.name, admin: msg.me.admin, owner: Boolean(msg.me.owner), chat: msg.chat, rtc: msg.rtc });
       // First visit: open the character creator.
       if (first && !msg.me.avatarChosen) useGame.setState({ modal: { type: 'character', first: true } });
       // After a reconnect, pick the open terminal's stream back up.
@@ -149,6 +165,9 @@ function handle(msg) {
         chat: [...s.chat.slice(-99), msg.entry],
         bubbles: { ...s.bubbles, [msg.entry.playerId]: { text: msg.entry.text, at: Date.now() } },
       }));
+      break;
+    case 'rtc':
+      rtcListeners.forEach((fn) => fn(msg.from, msg.data));
       break;
     case 'pty':
       ptyListeners.get(msg.agentId)?.forEach((fn) => fn(msg.data));

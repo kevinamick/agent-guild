@@ -147,6 +147,13 @@ async function main() {
   lee.send({ t: 'hire', deskId: 1, task: { text: 'fix issue #9 and open a pr', kind: 'issue' } });
   const labXp = await lee.wait((m) => m.t === 'event' && m.kind === 'xp', 'lab agent xp', 20000);
   check(labXp.amount > 0 && !kevin.events.some((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === labXp.agentId), "Lab's agent earns XP in Lab only");
+  // WebRTC signaling relays to a player in the same office only.
+  lee.send({ t: 'rtc', to: kevin.state.players.find((p) => p.name === 'Kevin').id, data: { channel: 'test' } });
+  alice.send({ t: 'rtc', to: kevin.state.players.find((p) => p.name === 'Kevin').id, data: { channel: 'voice', sdp: 'x' } });
+  const rtc = await kevin.wait((m) => m.t === 'rtc', 'rtc relay');
+  await sleep(300);
+  check(rtc.data.channel === 'voice' && rtc.from === alice.state.players.find((p) => p.name === 'Alice').id && !kevin.events.some((m) => m.t === 'rtc' && m.data?.channel === 'test'),
+    'WebRTC signaling reaches players in the same office and never crosses offices');
   kevin.send({ t: 'revoke', name: 'Lee' });
   await sleep(300);
   check(lee.closed === null, "revoking 'Lee' from the main office doesn't touch Lab's Lee");

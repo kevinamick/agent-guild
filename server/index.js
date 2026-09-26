@@ -30,6 +30,9 @@ const { values: opts } = parseArgs({
     // Where people open the office (for invite links) and where runners connect.
     'client-url': { type: 'string', default: process.env.GUILD_CLIENT_URL || '' },
     'public-url': { type: 'string', default: process.env.GUILD_PUBLIC_URL || '' },
+    // WebRTC ICE servers (JSON) for voice and screen sharing. STUN alone works on
+    // most networks; add a TURN server for people behind strict firewalls.
+    'ice-servers': { type: 'string', default: process.env.GUILD_ICE_SERVERS || '[{"urls":"stun:stun.l.google.com:19302"}]' },
     // What coworkers run to host agents: a package npx can fetch (the repo's latest tarball).
     'runner-package': { type: 'string', default: process.env.GUILD_RUNNER_PACKAGE || 'https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz' },
   },
@@ -54,6 +57,13 @@ for (const pair of opts.seed.split(',').filter(Boolean)) {
 if (keys.isEmpty()) bootstrapKey = keys.issue(opts.admin, true, 'main', { owner: true });
 
 const RUNNER_GRACE_MS = 10 * 60 * 1000;
+let ICE_SERVERS;
+try {
+  ICE_SERVERS = JSON.parse(opts['ice-servers']);
+} catch {
+  console.error('GUILD_ICE_SERVERS / --ice-servers is not valid JSON');
+  process.exit(1);
+}
 
 function readJson(file, fallback) {
   try {
@@ -336,6 +346,16 @@ function createOffice(officeId, officeName, dataDir) {
         player.ry = +msg.ry || 0;
         player.moved = true;
         break;
+      case 'rtc': {
+        // WebRTC signaling (offers, answers, ICE candidates) between two players.
+        // Only to someone in this same office; the payload is opaque to the server.
+        const target = players.get(msg.to);
+        if (!target || target === player) return;
+        const data = JSON.stringify(msg.data ?? null);
+        if (data.length > 64 * 1024) return;
+        target.ws.send(JSON.stringify({ t: 'rtc', from: player.id, data: JSON.parse(data) }));
+        break;
+      }
       case 'chat': {
         const text = String(msg.text || '').slice(0, 280).trim();
         if (!text) return;
@@ -657,7 +677,7 @@ function createOffice(officeId, officeName, dataDir) {
     send(ws, {
       t: 'welcome', you: id,
       me: { name, admin: ident.admin, owner: player.owner, avatar, avatarChosen: Boolean(avatar.chosen) },
-      state: snapshot(), chat,
+      state: snapshot(), chat, rtc: { iceServers: ICE_SERVERS },
     });
     if (!previous) toast(`👋 ${name} walked into the office`);
     pushState();
