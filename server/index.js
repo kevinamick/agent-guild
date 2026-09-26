@@ -30,6 +30,8 @@ const { values: opts } = parseArgs({
     // Where people open the office (for invite links) and where runners connect.
     'client-url': { type: 'string', default: process.env.GUILD_CLIENT_URL || '' },
     'public-url': { type: 'string', default: process.env.GUILD_PUBLIC_URL || '' },
+    // What coworkers run to host agents (an npx-able package spec).
+    'runner-package': { type: 'string', default: process.env.GUILD_RUNNER_PACKAGE || 'github:kevinamick/agent-guild' },
   },
 });
 
@@ -430,7 +432,7 @@ function inviteLinks(key) {
   const k = key || '<your key>';
   return {
     joinUrl: key ? `${client}/#key=${key}` : client,
-    runnerCmd: `node runner/index.js --server ${pub} --key ${k} --repo-dir <your checkout of the team repo>`,
+    runnerCmd: `npx -y ${opts['runner-package']} --server ${pub} --key ${k}`,
   };
 }
 

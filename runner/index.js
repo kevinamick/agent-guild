@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parseArgs } from 'node:util';
-import pty from 'node-pty';
+import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { emptyXp } from '../shared/progression.js';
 import { lessonCounts, readPlaybooks, systemPrompt, trimPlaybooks, playbookDir } from './playbook.js';
@@ -17,10 +17,35 @@ import { ADAPTERS, customAdapter, onPath, normalizeHook } from './adapters.js';
 import { detectProvider, loadBoard, PR_COMMANDS } from './providers.js';
 
 const run = promisify(execFile);
+const VERSION = createRequire(import.meta.url)('../package.json').version;
+
+const HELP = `Agent Guild runner ${VERSION}: host your coding agents in a shared Agent Guild office.
+
+Run it inside your checkout of the team repo:
+
+  npx -y github:kevinamick/agent-guild --server wss://<office> --key <your key>
+
+The server and key are remembered after the first sign-in, so next time just run:
+
+  npx -y github:kevinamick/agent-guild
+
+Options:
+  --server <url>          office server (ws:// or wss://)
+  --key <key>             your personal key from the invite
+  --repo-dir <dir>        repo your agents work in (default: current directory)
+  --cli <list>            engines to offer: claude, copilot (default: whichever are installed)
+  --private               don't lend your agents to coworkers
+  --permission-mode <m>   Claude Code permission mode (default: auto)
+  --copilot-args "<...>"  extra flags for Copilot agents, e.g. "--allow-all-tools"
+  --home <dir>            where agents, playbooks and worktrees live (default: ~/.agent-guild)
+  --forget                delete the saved server and key, then exit
+  -v, --version / -h, --help
+
+Needs Node 20+, git, curl, and Claude Code (claude) or GitHub Copilot CLI (copilot).`;
 
 const { values: opts } = parseArgs({
   options: {
-    server: { type: 'string', default: process.env.GUILD_SERVER || 'ws://localhost:4600' },
+    server: { type: 'string', default: process.env.GUILD_SERVER || '' },
     key: { type: 'string', default: process.env.GUILD_KEY || '' },
     'repo-dir': { type: 'string', default: process.cwd() },
     home: { type: 'string', default: path.join(os.homedir(), '.agent-guild') },
@@ -32,12 +57,73 @@ const { values: opts } = parseArgs({
     'copilot-args': { type: 'string', default: process.env.GUILD_COPILOT_ARGS || '' },
     // Run a custom command instead (testing, or another CLI wired to the hook URL).
     'agent-cmd': { type: 'string', default: '' },
+    forget: { type: 'boolean', default: false },
+    help: { type: 'boolean', short: 'h', default: false },
+    version: { type: 'boolean', short: 'v', default: false },
   },
 });
+
+if (opts.help) {
+  console.log(HELP);
+  process.exit(0);
+}
+if (opts.version) {
+  console.log(VERSION);
+  process.exit(0);
+}
 
 const REPO_DIR = path.resolve(opts['repo-dir']);
 const HOME = opts.home;
 const AGENTS_DIR = path.join(HOME, 'agents');
+const CONFIG_FILE = path.join(HOME, 'config.json');
+fs.mkdirSync(HOME, { recursive: true });
+
+// Remember where and as whom to connect, so the second run needs no flags.
+function readConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+function saveConfig(cfg) {
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  fs.chmodSync(CONFIG_FILE, 0o600);
+}
+if (opts.forget) {
+  fs.rmSync(CONFIG_FILE, { force: true });
+  console.log('Forgot the saved server and key.');
+  process.exit(0);
+}
+const saved = readConfig();
+opts.server ||= saved.server || '';
+opts.key ||= saved.key || '';
+if (!opts.server || !opts.key) {
+  console.error('Missing --server and --key. Your invite (or 👥 Team in the office) has the exact command.\n');
+  console.error(HELP);
+  process.exit(1);
+}
+
+// Prebuilt PTY binaries (no compiler needed); fall back to node-pty if that's what's installed.
+let pty;
+try {
+  pty = (await import('@lydell/node-pty')).default;
+} catch {
+  try {
+    pty = (await import('node-pty')).default;
+  } catch {
+    console.error('Could not load a terminal driver (@lydell/node-pty). Reinstall with `npx -y github:kevinamick/agent-guild` on Node 20+.');
+    process.exit(1);
+  }
+}
+
+try {
+  await run('git', ['-C', REPO_DIR, 'rev-parse', '--show-toplevel']);
+} catch {
+  console.error(`${REPO_DIR} isn't a git repository. Run this inside your checkout of the team repo, or pass --repo-dir.`);
+  process.exit(1);
+}
+
 const ENGINES = opts['agent-cmd']
   ? { custom: customAdapter(path.resolve(opts['agent-cmd'])) }
   : Object.fromEntries(
@@ -51,10 +137,6 @@ if (!Object.keys(ENGINES).length) {
 }
 const HOOK_SECRET = crypto.randomBytes(12).toString('hex');
 const SCROLLBACK_LIMIT = 128 * 1024;
-if (!opts.key) {
-  console.error('Missing --key. Ask the office admin for an invite; it includes your runner command.');
-  process.exit(1);
-}
 let ownerName = '?';
 // Messages that must not be lost while the office link is down (XP, lessons, exits).
 const outbox = [];
@@ -320,7 +402,11 @@ async function onMessage(msg) {
       return promptAgent(msg.agentId, msg.text);
     case 'welcome':
       ownerName = msg.owner;
-      log(`signed in as ${ownerName}${opts.private ? ' (private)' : ' (lending agents to coworkers)'}`);
+      log(`signed in as ${ownerName}${opts.private ? ' (private)' : ' (lending agents to coworkers)'}. Keep this window open while you're hosting agents.`);
+      if (saved.server !== opts.server || saved.key !== opts.key) {
+        saveConfig({ server: opts.server, key: opts.key });
+        log(`saved your server and key to ${CONFIG_FILE}; next time just run the command without flags`);
+      }
       ws.ready = true;
       while (outbox.length) send(outbox.shift());
       return;

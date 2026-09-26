@@ -591,7 +591,7 @@ export function TeamModal() {
       <div className="modal-body">
         <h4 className="section-title">Host your own agents</h4>
         <p className="muted small">
-          Run this in a clone of <a href="https://github.com/kevinamick/agent-guild" target="_blank" rel="noreferrer">Agent Guild</a> (<code>npm install</code> first). Your agents run on your machine with your Claude login, in your checkout of the team repo.
+          Open a terminal in your checkout of the team repo and paste this. Nothing to clone or install: it needs Node 20+ and Claude Code or GitHub Copilot CLI. Your agents run on your machine with your own login, and after the first run you can start it again with just <code>npx -y github:kevinamick/agent-guild</code>.
         </p>
         {links && <Copyable label="Runner command" value={links.runnerCmd.replace('<your key>', myKey)} secret />}
 
@@ -613,7 +613,7 @@ export function TeamModal() {
               <div className="invite-box">
                 <b>Key for {invite.name}.</b> <span className="muted small">It's shown only this once. Send it privately.</span>
                 <Copyable label="Join link (opens the office signed in)" value={invite.joinUrl} secret />
-                <Copyable label="Their runner command" value={invite.runnerCmd} secret />
+                <Copyable label="Their runner command (run inside their checkout of the team repo)" value={invite.runnerCmd} secret />
               </div>
             )}
             <h4 className="section-title">Members</h4>

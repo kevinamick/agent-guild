@@ -54,13 +54,19 @@ XP for one task (a prompt through to Claude's `Stop`): +10 for the task, +2 per 
 
 ## Join an existing office (coworkers)
 
+Open the join link from your invite to walk into the office. To host your own agents, open a terminal **in your checkout of the team repo** and run the command from your invite (also under 👥 Team):
+
 ```bash
-git clone https://github.com/kevinamick/agent-guild.git && cd agent-guild && npm install
-# Use the runner command from your invite (or 👥 Team in the office), e.g.
-node runner/index.js --server wss://<office-host> --key <your key> --repo-dir ~/code/our-repo
+npx -y github:kevinamick/agent-guild --server wss://<office-host> --key <your key>
 ```
 
-Pull and restart your runner when the office is updated (`git pull && npm install`).
+There's nothing to clone and nothing to compile: the terminal driver ships prebuilt for macOS, Linux and Windows (x64 and arm64). You need Node 20+, git, curl, and Claude Code or GitHub Copilot CLI. After the first sign-in, the server and key are saved to `~/.agent-guild/config.json` (readable only by you), so next time it's just:
+
+```bash
+npx -y github:kevinamick/agent-guild
+```
+
+`npx` fetches the latest version from GitHub each run, so updates arrive by themselves. `--help` lists the options, and `--forget` removes the saved key. Native Windows is untested; use WSL there.
 
 ## Run it locally
 
