@@ -76,6 +76,10 @@ Only the **deployment owner** can create offices: the key set as `GUILD_ADMIN_KE
 
 Runners keep each office's agents apart on disk (`~/.agent-guild/offices/<office>/agents`). A runner serves one office at a time, the one its key belongs to.
 
+## Releasing a runner update
+
+Runners started with `--package …/archive/HEAD.tar.gz` update themselves: at startup they compare their version with `package.json` on GitHub, and if it's newer they clear their npx copy and restart on the new one. So to ship runner changes, **bump `version` in `package.json`** and push to `main`. Commits that don't bump the version aren't picked up by runners that are already installed.
+
 ## Run it locally
 
 ```bash
