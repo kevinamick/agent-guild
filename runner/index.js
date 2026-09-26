@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
@@ -71,6 +72,50 @@ if (opts.version) {
   console.log(VERSION);
   process.exit(0);
 }
+
+// npx never re-downloads a URL it has already installed, so a runner started from
+// the GitHub tarball checks for a newer release itself. If there is one, it clears
+// its own npx cache entry and starts the same command again, which fetches it.
+const RUNNER_PACKAGE = process.env.GUILD_RUNNER_PACKAGE || 'https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz';
+
+function newer(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+}
+
+async function selfUpdate() {
+  const cacheDir = fileURLToPath(import.meta.url).match(/^(.*[\\/]_npx[\\/][^\\/]+)[\\/]/)?.[1];
+  const gh = RUNNER_PACKAGE.match(/github\.com\/([^/]+)\/([^/]+)\/archive\/(.+)\.tar\.gz$/);
+  if (!cacheDir || !gh || process.env.GUILD_NO_UPDATE) return false;
+  let latest;
+  try {
+    const res = await fetch(`https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}/package.json`, { signal: AbortSignal.timeout(4000) });
+    latest = (await res.json()).version;
+  } catch {
+    return false; // offline or GitHub unreachable: run what we have
+  }
+  if (!latest || !newer(latest, VERSION)) return false;
+  console.log(`Updating the Agent Guild runner ${VERSION} → ${latest}…`);
+  try {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  } catch (e) {
+    console.log(`Couldn't clear the old copy (${e.message}); continuing with ${VERSION}.`);
+    return false;
+  }
+  // GUILD_NO_UPDATE stops a loop if GitHub's tarball lags behind its raw file for a minute.
+  const child = spawn('npx', ['-y', '--package', RUNNER_PACKAGE, 'agent-guild', ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: { ...process.env, GUILD_NO_UPDATE: '1' },
+    shell: process.platform === 'win32',
+  });
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
+  child.on('exit', (code) => process.exit(code ?? 0));
+  return true;
+}
+
+if (await selfUpdate()) await new Promise(() => {}); // the updated runner has taken over
 
 const REPO_DIR = path.resolve(opts['repo-dir']);
 const HOME = opts.home;
