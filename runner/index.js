@@ -14,7 +14,7 @@ import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { emptyXp } from '../shared/progression.js';
 import { lessonCounts, readPlaybooks, systemPrompt, trimPlaybooks, playbookDir } from './playbook.js';
-import { ADAPTERS, customAdapter, onPath, normalizeHook } from './adapters.js';
+import { ADAPTERS, customAdapter, resolveBin, spawnSpec, normalizeHook } from './adapters.js';
 import { detectProvider, loadBoard, PR_COMMANDS } from './providers.js';
 
 const run = promisify(execFile);
@@ -175,8 +175,8 @@ const ENGINES = opts['agent-cmd']
   ? { custom: customAdapter(path.resolve(opts['agent-cmd'])) }
   : Object.fromEntries(
       (opts.cli ? opts.cli.split(',').map((c) => c.trim()) : Object.keys(ADAPTERS))
-        .filter((c) => ADAPTERS[c] && onPath(ADAPTERS[c].bin))
-        .map((c) => [c, ADAPTERS[c]]),
+        .map((c) => [c, ADAPTERS[c] && { ...ADAPTERS[c], path: resolveBin(ADAPTERS[c].bin) }])
+        .filter(([, a]) => a?.path),
     );
 if (!Object.keys(ENGINES).length) {
   console.error('No agent CLI found. Install Claude Code (`claude`) or GitHub Copilot CLI (`npm i -g @github/copilot`), or pass --cli.');
@@ -363,7 +363,9 @@ async function spawnAgent({ agent, task, worktree, cols, rows, deskId, meta, cli
   });
   const env = { ...baseEnv, ...launch.env };
 
-  const term = pty.spawn(launch.cmd, launch.args, { name: 'xterm-256color', cols: cols || 120, rows: rows || 34, cwd, env });
+  // Start the file we actually found (e.g. copilot.exe), not just the bare name.
+  const { file, args } = spawnSpec(adapter.path || launch.cmd, launch.args);
+  const term = pty.spawn(file, args, { name: 'xterm-256color', cols: cols || 120, rows: rows || 34, cwd, env });
   const s = {
     term, cwd, worktree: wt, turn: null, buf: '', timer: null, screen: '', trustAsked: false,
     scrollback: '', deskId, meta, engine, status: task ? 'starting' : 'ready', activity: '',
@@ -536,7 +538,7 @@ function shutdown() {
 hookServer.listen(0, '127.0.0.1', async () => {
   hookPort = hookServer.address().port;
   const repo = await detectRepo();
-  log(`runner in ${REPO_DIR}${repo ? ` (${provider.type === 'ado' ? 'Azure DevOps' : 'GitHub'}: ${repo})` : ''}; engines: ${Object.values(ENGINES).map((a) => a.label).join(', ')}`);
+  log(`runner in ${REPO_DIR}${repo ? ` (${provider.type === 'ado' ? 'Azure DevOps' : 'GitHub'}: ${repo})` : ''}; engines: ${Object.values(ENGINES).map((a) => `${a.label}${a.path ? ` (${a.path})` : ''}`).join(', ')}`);
   connect(repo);
 });
 

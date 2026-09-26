@@ -45,7 +45,12 @@ export const ADAPTERS = {
         JSON.stringify({ name: 'agent-guild', version: '1.0.0', description: 'Reports agent status to the Agent Guild office' }),
       );
       const map = { sessionStart: 'SessionStart', userPromptSubmitted: 'UserPromptSubmit', preToolUse: 'PreToolUse', agentStop: 'Stop', notification: 'Notification' };
-      const hooks = Object.fromEntries(Object.entries(map).map(([ev, ours]) => [ev, [{ type: 'command', bash: hookCommand(hookUrl, ours), timeoutSec: 5 }]]));
+      // Copilot runs `bash` on macOS/Linux and `powershell` on Windows.
+      const psCommand = (event) =>
+        `$b = [Console]::In.ReadToEnd(); try { Invoke-RestMethod -Uri '${hookUrl}/${event}' -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 2 | Out-Null } catch {}`;
+      const hooks = Object.fromEntries(
+        Object.entries(map).map(([ev, ours]) => [ev, [{ type: 'command', bash: hookCommand(hookUrl, ours), powershell: psCommand(ours), timeoutSec: 5 }]]),
+      );
       fs.writeFileSync(path.join(pluginDir, 'hooks.json'), JSON.stringify({ version: 1, hooks }));
 
       // The playbook reaches Copilot as an extra AGENTS.md.
@@ -75,16 +80,33 @@ export function customAdapter(cmd) {
   };
 }
 
-export function onPath(bin) {
-  if (bin.includes('/')) return fs.existsSync(bin);
-  return (process.env.PATH || '').split(path.delimiter).some((d) => {
-    try {
-      fs.accessSync(path.join(d, bin), fs.constants.X_OK);
-      return true;
-    } catch {
-      return false;
+// Find an executable on PATH and return its full path. Besides the bare name
+// (`copilot`), this finds `copilot.exe` (e.g. installed by WinGet) and, on
+// Windows, the other PATHEXT forms such as the `copilot.cmd` shim npm creates.
+export function resolveBin(bin, { env = process.env, platform = process.platform } = {}) {
+  if (bin.includes('/') || bin.includes('\\')) return fs.existsSync(bin) ? bin : null;
+  const exts = ['', '.exe'];
+  if (platform === 'win32') {
+    for (const e of (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';')) if (e && !exts.includes(e.toLowerCase())) exts.push(e.toLowerCase());
+  }
+  const sep = platform === 'win32' ? ';' : ':';
+  for (const dir of (env.PATH || env.Path || '').split(sep).filter(Boolean)) {
+    for (const ext of exts) {
+      const file = path.join(dir, bin + ext);
+      try {
+        fs.accessSync(file, fs.constants.X_OK);
+        if (fs.statSync(file).isFile()) return file;
+      } catch {}
     }
-  });
+  }
+  return null;
+}
+
+export const onPath = (bin) => Boolean(resolveBin(bin));
+
+// node-pty starts real executables; batch shims (.cmd/.bat) need cmd.exe.
+export function spawnSpec(file, args) {
+  return /\.(cmd|bat)$/i.test(file) ? { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', file, ...args] } : { file, args };
 }
 
 // Normalize hook payloads: Copilot sends toolName/toolArgs, Claude tool_name/tool_input.
