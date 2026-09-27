@@ -191,7 +191,7 @@ export function adoWorkItemToItem(wi, p) {
     areaPath: f['System.AreaPath'] || null,
     author: { login: f['System.CreatedBy']?.displayName || f['System.CreatedBy'] || 'someone' },
     createdAt: f['System.CreatedDate'],
-    body: htmlToText(f['System.Description'] || f['Microsoft.VSTS.TCM.ReproSteps'] || ''),
+    body: htmlToText(f['System.Description'] || f['Microsoft.VSTS.TCM.ReproSteps'] || '').slice(0, 4000), // a board can hold 1,000 of these
     url: `${base(p)}/_workitems/edit/${wi.id}`,
     labels: String(f['System.Tags'] || '').split(';').map((t) => t.trim()).filter(Boolean).map((name) => ({ name })),
   };
@@ -246,18 +246,39 @@ async function adoBoard(kind, p, { area } = {}) {
     return (data.value || []).map((pr) => adoPrToItem(pr, p));
   }
   const areas = await adoAreas(p);
-  const wiql = await adoFetch(`${base(p)}/_apis/wit/wiql?$top=60&api-version=7.1`, p, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.WorkItemType] NOT IN ('Test Case', 'Test Plan', 'Test Suite', 'Shared Steps')${areaClause(area, areas)} ORDER BY [System.ChangedDate] DESC`,
-    }),
-  });
-  const ids = (wiql.workItems || []).map((w) => w.id).slice(0, 60);
-  if (!ids.length) return { items: [], areas };
+  const q = workItemQueries(area, areas);
+  const wiql = (query, top) =>
+    adoFetch(`${base(p)}/_apis/wit/wiql?$top=${top}&api-version=7.1`, p, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query }),
+    }).then((r) => (r.workItems || []).map((w) => w.id).slice(0, top));
+  const [open, closed] = await Promise.all([wiql(q.open, OPEN_LIMIT), wiql(q.closed, CLOSED_LIMIT)]);
+  const ids = [...open, ...closed];
+  if (!ids.length) return { items: [], areas, truncated: false };
   const fields = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.AreaPath', 'System.CreatedBy', 'System.CreatedDate', 'System.Description', 'System.Tags', 'Microsoft.VSTS.TCM.ReproSteps'];
-  const items = await adoFetch(`${base(p)}/_apis/wit/workitems?ids=${ids.join(',')}&fields=${fields.join(',')}&errorPolicy=omit&api-version=7.1`, p);
-  return { items: (items.value || []).filter(Boolean).map((wi) => adoWorkItemToItem(wi, p)), areas };
+  // The work items API takes up to 200 ids a call.
+  const batches = await Promise.all(
+    chunk(ids, 200).map((part) => adoFetch(`${base(p)}/_apis/wit/workitems?ids=${part.join(',')}&fields=${fields.join(',')}&errorPolicy=omit&api-version=7.1`, p)),
+  );
+  const items = batches.flatMap((b) => b.value || []).filter(Boolean).map((wi) => adoWorkItemToItem(wi, p));
+  return { items, areas, truncated: open.length >= OPEN_LIMIT };
+}
+
+const OPEN_LIMIT = 1000;
+const CLOSED_LIMIT = 30;
+export const chunk = (list, size) => Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, (i + 1) * size));
+
+// Everything still open under the area (sub-areas included), plus the most recently
+// closed few for the Closed column. One query for both would let old closed items
+// crowd out open work.
+export function workItemQueries(area, areas) {
+  const where = `[System.TeamProject] = @project AND [System.WorkItemType] NOT IN ('Test Case', 'Test Plan', 'Test Suite', 'Shared Steps')${areaClause(area, areas)}`;
+  const closed = [...CLOSED_STATES].map((s) => `'${s[0].toUpperCase()}${s.slice(1)}'`).join(', ');
+  return {
+    open: `SELECT [System.Id] FROM WorkItems WHERE ${where} AND [System.State] NOT IN (${closed}) ORDER BY [System.ChangedDate] DESC`,
+    closed: `SELECT [System.Id] FROM WorkItems WHERE ${where} AND [System.State] IN (${closed}) ORDER BY [System.ChangedDate] DESC`,
+  };
 }
 
 // Returns an array of items, or { items, areas } for Azure DevOps work items.

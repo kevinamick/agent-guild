@@ -86,7 +86,7 @@ test('sign-in messages say which credential was rejected', () => {
   assert.match(signInMessage(null, 'contoso', "`az` isn't on PATH"), /needs sign-in.*az login.*isn't on PATH/);
 });
 
-import { flattenAreas, areaClause } from './providers.js';
+import { flattenAreas, areaClause, workItemQueries, chunk } from './providers.js';
 
 test('area paths come out as work items store them', () => {
   const tree = { name: 'Web', path: '\\Web\\Area', children: [{ name: 'Checkout', children: [{ name: 'Payments' }] }, { name: "O'Hare Team" }] };
@@ -133,4 +133,19 @@ test('a fetch that cannot connect falls back to curl, and explains when both fai
     /Couldn't reach dev\.azure\.com \(SELF_SIGNED_CERT_IN_CHAIN\); curl couldn't either \(curl: \(60\) SSL certificate problem\)\. Behind a proxy\?/,
   );
   assert.equal(netReason(new TypeError('fetch failed')), 'fetch failed');
+});
+
+test('work item queries take everything open under the area, and only a few closed', () => {
+  const areas = ['Web', 'Web\\Checkout', 'Web\\Checkout\\Payments'];
+  const q = workItemQueries('Web\\Checkout', areas);
+  for (const query of [q.open, q.closed]) assert.match(query, /\[System\.AreaPath\] UNDER 'Web\\Checkout'/);
+  assert.match(q.open, /\[System\.State\] NOT IN \('Closed', 'Done', 'Removed'/);
+  assert.match(q.closed, /\[System\.State\] IN \('Closed'/);
+  assert.doesNotMatch(workItemQueries('', areas).open, /AreaPath/);
+});
+
+test('ids are fetched 200 at a time', () => {
+  const ids = Array.from({ length: 450 }, (_, i) => i);
+  assert.deepEqual(chunk(ids, 200).map((c) => c.length), [200, 200, 50]);
+  assert.deepEqual(chunk([], 200), []);
 });

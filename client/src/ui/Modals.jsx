@@ -93,6 +93,7 @@ export function BoardModal({ kind }) {
         <button className="btn" onClick={() => requestBoard(kind, { force: true })}>🔄 Refresh</button>
       </div>
       {board?.error && <div className="error-box">{board.error}</div>}
+      {board?.truncated && <div className="muted small board-note">Showing the 1,000 most recently changed open work items. Pick a narrower area to see the rest.</div>}
       <div className="columns">
         {COLUMNS[kind].map(([col, label]) => {
           const inCol = items.filter((i) => columnOf(kind, i, activeRefs) === col);

@@ -649,7 +649,7 @@ function createOffice(officeId, officeName, dataDir) {
     try {
       const data = await askRunner(runner, { t: 'board', kind, area });
       // Older runners answer with a plain list; newer ones add the area paths for ADO.
-      const entry = Array.isArray(data) ? { items: data, at: Date.now() } : { items: data.items || [], areas: data.areas || null, at: Date.now() };
+      const entry = Array.isArray(data) ? { items: data, at: Date.now() } : { items: data.items || [], areas: data.areas || null, truncated: Boolean(data.truncated), at: Date.now() };
       boardCache.set(key, entry);
       send(player.ws, { t: 'board', kind, area, ...entry });
     } catch (e) {

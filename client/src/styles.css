@@ -309,3 +309,5 @@ body[data-fp='1'] canvas { touch-action: none; } /* drag-to-look instead of scro
 .area-option { padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .area-option.on { background: #fff1e6; }
 .area-option.current b { color: #6d28d9; }
+
+.board-note { padding: 0 16px 8px; }
