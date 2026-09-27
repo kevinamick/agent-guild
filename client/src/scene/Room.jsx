@@ -256,7 +256,12 @@ function drawNeon(c, { lines, font, glow, tube }) {
   g.textBaseline = 'middle';
   g.lineJoin = 'round';
   g.lineCap = 'round';
+  // Shrink the lettering to fit, leaving room for the glow, or the ends get clipped.
+  const pad = 70;
   g.font = font;
+  const widest = Math.max(...lines.map(([t]) => g.measureText(t).width));
+  const fit = Math.min(1, (c.width - 2 * pad) / widest);
+  g.font = font.replace(/(\d+(?:\.\d+)?)px/, (_, px) => `${Math.floor(px * fit)}px`);
   const pass = (blur, color, width, stroke) => {
     g.shadowBlur = blur;
     g.shadowColor = color;

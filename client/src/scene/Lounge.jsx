@@ -282,7 +282,7 @@ export function CoffeeBar() {
   const stools = useMemo(() => bar.stools.map((x, i) => ({ p: [x, 0, bar.stoolZ], r: i * 0.7 })), []);
   const globes = useMemo(() => bar.stools.map((x) => ({ p: [x, 2.6, BACK + 0.4] })), []);
   const cords = useMemo(() => bar.stools.map((x) => ({ p: [x, 2.75, BACK + 0.4], s: [1, WALL_HEIGHT - 2.75, 1] })), []);
-  const sign = useNeonTexture(COFFEE_SIGN, 512, 200);
+  const sign = useNeonTexture(COFFEE_SIGN, 768, 240);
   const f = bar.fridge;
   return (
     <group>
@@ -318,11 +318,11 @@ export function CoffeeBar() {
       {/* a little neon hung in the window */}
       <group position={[cx + 0.2, 3.55, BACK + 0.1]}>
         <mesh>
-          <planeGeometry args={[2.1, 0.82]} />
+          <planeGeometry args={[2.6, 0.81]} />
           <meshBasicMaterial map={sign} transparent depthWrite={false} toneMapped={false} />
         </mesh>
         <mesh position={[0, 0, -0.02]}>
-          <planeGeometry args={[2.6, 1.3]} />
+          <planeGeometry args={[3.1, 1.3]} />
           <meshBasicMaterial map={glowTexture()} transparent depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} opacity={0.35} color="#ffb870" />
         </mesh>
       </group>
