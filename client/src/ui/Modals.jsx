@@ -515,7 +515,7 @@ export function HelpModal() {
         <h4>Controls</h4>
         <div className="help-grid">
           <kbd>WASD</kbd><span>walk around</span>
-          <kbd>E</kbd><span>interact: open a terminal, hire at an empty desk, open a board</span>
+          <kbd>E</kbd><span>interact: open a terminal, hire at an empty desk, open a board, share your screen on the TV</span>
           <kbd>P</kbd><span>prompt the agent you're next to</span>
           <kbd>K</kbd><span>give kudos (+{KUDOS_XP} XP, once per task)</span>
           <kbd>C</kbd><span>view the agent's card and playbook</span>

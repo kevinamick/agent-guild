@@ -266,3 +266,9 @@ body[data-upstairs='1'] .floor-label { display: none; }
 .voice-badge { margin-left: auto; font-size: 12px; line-height: 1; }
 .voice-badge.talking { animation: voice-talk 0.6s ease-in-out infinite alternate; }
 @keyframes voice-talk { from { transform: scale(1); } to { transform: scale(1.25); } }
+
+/* screen-sharing TV: full-screen watch modal */
+.tv-modal { width: min(1280px, 100%); background: #0f172a; }
+.tv-modal-body { position: relative; flex: 1; min-height: 0; background: #000; display: grid; place-items: center; }
+.tv-modal-body video { display: block; width: 100%; max-height: calc(100vh - 150px); object-fit: contain; background: #000; }
+.tv-modal-wait { position: absolute; inset: 0; display: grid; place-items: center; color: #cbd5e1; font-weight: 800; }

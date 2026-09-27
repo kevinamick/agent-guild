@@ -155,6 +155,51 @@ async function main() {
   await sleep(300);
   check(rtc.data.channel === 'voice' && rtc.from === alice.state.players.find((p) => p.name === 'Alice').id && !kevin.events.some((m) => m.t === 'rtc' && m.data?.channel === 'test'),
     'WebRTC signaling reaches players in the same office and never crosses offices');
+
+  // --- the TV: one screen sharer per office, tracked by the server
+  const idOf = (p, name) => p.state.players.find((x) => x.name === name)?.id;
+  // Waits until this player's latest office state shows `id` holding the TV.
+  const sharerSeen = async (p, id) => {
+    for (let i = 0; i < 100; i++, await sleep(50)) if ((p.state?.tv?.sharer ?? null) === id) return;
+    throw new Error(`timeout: TV sharer should be ${id}, is ${p.state?.tv?.sharer}`);
+  };
+  const kevinId = idOf(kevin, 'Kevin');
+  check(kevin.state.tv?.sharer === null, 'nobody is sharing on the TV at first');
+  kevin.send({ t: 'tv', share: true });
+  await sharerSeen(alice, kevinId);
+  await alice.wait((m) => m.t === 'event' && m.kind === 'toast' && /Kevin is sharing their screen/.test(m.text), 'share toast');
+  check(true, "Kevin starts sharing and everyone in the office sees him on the TV (with a toast)");
+  alice.send({ t: 'tv', share: true });
+  await alice.wait((m) => m.t === 'error' && /Kevin is already sharing/.test(m.text), 'second sharer refused');
+  alice.send({ t: 'tv', share: false });
+  await sleep(300);
+  check(alice.state.tv.sharer === kevinId && kevin.state.tv.sharer === kevinId, "a second person can't take the TV, and only the sharer can stop it");
+  lee.send({ t: 'tv', share: true });
+  await sharerSeen(lee, idOf(lee, 'Lee'));
+  await sleep(300);
+  check(kevin.state.tv.sharer === kevinId && !lee.events.some((m) => m.state?.tv?.sharer === kevinId) && !kevin.events.some((m) => m.t === 'event' && /Lee is sharing/.test(m.text || '')),
+    "Lab's TV is its own: Lee shares there while Kevin shares here, and neither sees the other");
+  lee.send({ t: 'tv', share: false });
+  await sharerSeen(lee, null);
+  kevin.send({ t: 'tv', share: false });
+  await sharerSeen(alice, null);
+  check(true, 'the sharer stops and the TV is free again');
+  kevin.send({ t: 'invite', name: 'Dana' });
+  const danaKey = (await kevin.wait((m) => m.t === 'invited' && m.name === 'Dana', 'invite dana')).key;
+  const dana = player(danaKey);
+  await dana.ready;
+  const danaId = (await dana.wait((m) => m.t === 'welcome', 'dana welcome')).you;
+  dana.send({ t: 'tv', share: true });
+  await sharerSeen(alice, danaId);
+  const dana2 = player(danaKey); // Dana opens the office in another tab: the old tab's share ends
+  await dana2.ready;
+  const d2w = await dana2.wait((m) => m.t === 'welcome', 'dana second tab');
+  check(d2w.state.tv.sharer === null, "opening a new tab ends the old tab's screen share");
+  dana2.send({ t: 'tv', share: true });
+  await sharerSeen(alice, d2w.you);
+  dana2.ws.close();
+  await sharerSeen(alice, null);
+  check(true, "the sharer disconnecting frees the TV for everyone");
   kevin.send({ t: 'revoke', name: 'Lee' });
   await sleep(300);
   check(lee.closed === null, "revoking 'Lee' from the main office doesn't touch Lab's Lee");

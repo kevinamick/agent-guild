@@ -6,6 +6,7 @@ import { useHost } from '../host.js';
 import { PictureBar } from './PictureModal.jsx';
 import { SoundButton } from './Sound.jsx';
 import { VoiceButton, VoicePanel, VoiceBadge } from './Voice.jsx';
+import { TvPrompt } from './TvPrompt.jsx';
 
 export function XpBar({ xp, color = '#a855f7', thin }) {
   const p = progress(xp);
@@ -149,6 +150,7 @@ export function InteractionBar() {
         <Key k="E">Guild overview</Key>
       </div>
     );
+  if (focus.type === 'tv') return <TvPrompt Key={Key} />;
   if (focus.type === 'desk')
     return (
       <div className="interaction panel">

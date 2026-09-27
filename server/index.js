@@ -108,6 +108,7 @@ function createOffice(officeId, officeName, dataDir) {
   const pendingRunnerReplies = new Map();
   const killOnReconnect = new Set(); // sent home while their runner was away
   const pictures = createPictureStore(path.join(dataDir, 'pictures'), PICTURE_SPOTS);
+  let tvSharer = null; // player id sharing their screen on this office's TV (one at a time)
 
   // ---------------------------------------------------------------- persistence
 
@@ -159,6 +160,7 @@ function createOffice(officeId, officeName, dataDir) {
       agents: [...profiles.keys()].map(agentView),
       desks: Object.fromEntries(desks),
       pictures: pictures.list().map(({ spot, file, by, caption, at }) => ({ spot, url: `/pictures/${officeId}/${file}`, by, caption, at })),
+      tv: { sharer: tvSharer },
     };
   }
 
@@ -357,6 +359,22 @@ function createOffice(officeId, officeName, dataDir) {
         const data = JSON.stringify(msg.data ?? null);
         if (data.length > 64 * 1024) return;
         target.ws.send(JSON.stringify({ t: 'rtc', from: player.id, data: JSON.parse(data) }));
+        break;
+      }
+      case 'tv': {
+        // Screen sharing on the TV. The stream itself goes peer to peer (over the
+        // 'rtc' relay); the server only tracks who holds the TV.
+        if (players.get(player.id) !== player) return; // a replaced tab
+        if (msg.share) {
+          if (tvSharer === player.id) return;
+          if (tvSharer) return send(player.ws, { t: 'error', text: `${players.get(tvSharer)?.name || 'Someone'} is already sharing on the TV.` });
+          tvSharer = player.id;
+          toast(`📺 ${player.name} is sharing their screen on the TV`);
+        } else {
+          if (tvSharer !== player.id) return;
+          tvSharer = null;
+        }
+        pushState();
         break;
       }
       case 'chat': {
@@ -681,6 +699,7 @@ function createOffice(officeId, officeName, dataDir) {
     const previous = playerByName(name);
     if (previous) {
       players.delete(previous.id);
+      if (tvSharer === previous.id) tvSharer = null; // that tab's screen share ends with it
       previous.ws.close(4002, 'replaced');
     }
     const stored = avatars[avatarKey(officeId, name)];
@@ -710,6 +729,10 @@ function createOffice(officeId, officeName, dataDir) {
       }
     });
     ws.on('close', () => {
+      if (tvSharer === id) {
+        tvSharer = null;
+        pushState();
+      }
       if (players.get(id) !== player) return;
       players.delete(id);
       for (const l of live.values()) l.viewers.delete(id);

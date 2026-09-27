@@ -7,6 +7,8 @@ import { CharacterModal } from './ui/Character.jsx';
 import { BoardModal, HireModal, PromptModal, RosterModal, AgentModal, HelpModal, TeamModal } from './ui/Modals.jsx';
 import { PictureModal, interactPicture } from './ui/PictureModal.jsx';
 import { Soundscape } from './ui/Sound.jsx';
+import { TvModal } from './ui/TvModal.jsx';
+import { tvInteract } from './rtc/screenShare.js';
 
 
 function readSaved() {
@@ -75,6 +77,8 @@ function ModalRouter() {
       return <CharacterModal first={modal.first} />;
     case 'picture':
       return <PictureModal key={modal.spot} spot={modal.spot} />;
+    case 'tv':
+      return <TvModal />;
     default:
       return null;
   }
@@ -92,6 +96,10 @@ function interact(key) {
   if (focus.type === 'board') {
     if (key !== 'e') return;
     return focus.board === 'guild' ? openModal({ type: 'roster' }) : openModal({ type: 'board', kind: focus.board });
+  }
+  if (focus.type === 'tv') {
+    if (key === 'e') tvInteract();
+    return;
   }
   if (focus.type === 'desk') {
     if (key === 'e' || key === 'h') openModal({ type: 'hire', deskId: focus.deskId, kind: 'general' });

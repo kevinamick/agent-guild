@@ -6,6 +6,7 @@ import { ROOM, PODS, DESKS, BOARDS, DOOR, MEZZ, STAIRS, WALL_HEIGHT, BOSS_DESK }
 import { view } from './view.js';
 import { Pictures } from './Pictures.jsx';
 import { useGame } from '../net.js';
+import { Tv } from './Tv.jsx';
 
 const W = ROOM.maxX - ROOM.minX;
 const D = ROOM.maxZ - ROOM.minZ;
@@ -307,6 +308,7 @@ export function Office() {
       <Corkboard board={BOARDS[1]} items={openPrs} />
       <GuildHall board={BOARDS[2]} agents={agents} />
       <Pictures />
+      <Tv />
 
       {[[-18.6, -12.6], [18.6, -12.6], [-18.6, 12.4], [18.6, 12.4], [-16.5, 0.3], [16.5, 0.3], [-2.5, -12.9], [2.5, -12.9]].map(([x, z], i) => (
         <Plant key={i} position={[x, 0, z]} scale={i < 4 ? 1.4 : 1} />

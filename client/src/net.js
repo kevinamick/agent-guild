@@ -33,6 +33,7 @@ export const useGame = create(() => ({
   boards: {},
   playbooks: {},
   bubbles: {}, // playerId -> { text, at }
+  tv: { sharer: null }, // who is screen sharing on the TV (player id)
 }));
 
 let socket = null;
@@ -122,7 +123,7 @@ function applyState(state) {
   }
   const ids = new Set(state.players.map((p) => p.id));
   for (const id of positions.keys()) if (!ids.has(id)) positions.delete(id);
-  useGame.setState({ office: state.office, players: state.players, runners: state.runners, agents, desks: state.desks, pictures: state.pictures || [] });
+  useGame.setState({ office: state.office, players: state.players, runners: state.runners, agents, desks: state.desks, pictures: state.pictures || [], tv: state.tv || { sharer: null } });
 }
 
 function handle(msg) {
