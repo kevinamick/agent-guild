@@ -24,9 +24,9 @@ export function startSoundscape() {
     return { gain: sfxVolume(me, src), pan: panFor(me, src, rightVector(localPlayer.level)) };
   };
 
-  // Real people talking across a room (a CC0 field recording, see
-  // client/public/sounds/CREDITS.md), cut into a seamless ~14 s loop. Two copies
-  // play offset and at slightly different speeds, so the repeat is hard to spot.
+  // A real office: people chatting, keyboards and mice (a CC0 field recording, see
+  // client/public/sounds/CREDITS.md), cut into a seamless loop of over three
+  // minutes, long enough that the repeat isn't noticeable.
   function startBed(ctx) {
     bed = { loading: true };
     fetch(`${import.meta.env.BASE_URL}sounds/office-chatter.mp3`)
@@ -39,22 +39,13 @@ export function startSoundscape() {
         filter.frequency.value = 3200;
         const gain = ctx.createGain();
         gain.gain.value = 0;
-        filter.connect(gain).connect(sfxBus());
-        const layers = [
-          { rate: 1, offset: 0, pan: -0.35 },
-          { rate: 0.97, offset: buffer.duration * 0.55, pan: 0.35 },
-        ].map(({ rate, offset, pan }) => {
-          const src = ctx.createBufferSource();
-          src.buffer = buffer;
-          src.loop = true;
-          src.playbackRate.value = rate;
-          const p = ctx.createStereoPanner();
-          p.pan.value = pan;
-          src.connect(p).connect(filter);
-          src.start(ctx.currentTime, offset);
-          return src;
-        });
-        bed = { layers, filter, gain };
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.loop = true;
+        src.connect(filter).connect(gain).connect(sfxBus());
+        // Start somewhere random so everyone in the office isn't hearing the same moment.
+        src.start(ctx.currentTime, Math.random() * buffer.duration);
+        bed = { layers: [src], filter, gain };
       })
       .catch(() => (bed = { failed: true })); // no chatter is better than an error
   }
