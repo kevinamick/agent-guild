@@ -121,6 +121,25 @@ async function main() {
   const xp2 = await alice.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'review', 'review xp', 20000);
   check(xp2.from === 'Alice', `Alice borrowed Kevin's agent; it earned ${xp2.amount} review XP`);
 
+  // --- naming agents: owner (or admin) only, tidied, unique per office, synced to the runner
+  alice.send({ t: 'rename', agentId, name: 'Hacked' });
+  await alice.wait((m) => m.t === 'error' && /Only Kevin or an admin/.test(m.text), 'non-owner rename refused');
+  check(true, "someone else can't rename Kevin's agent");
+  kevin.send({ t: 'rename', agentId, name: '  Ada   Lovelace ' });
+  await kevin.wait((m) => m.t === 'state' && agentIn(m, agentId)?.name === 'Ada Lovelace', 'renamed');
+  await sleep(400);
+  const localAgent = JSON.parse(fs.readFileSync(path.join(TMP, 'Kevin', 'offices', 'main', 'agents', agentId, 'agent.json'), 'utf8'));
+  check(localAgent.name === 'Ada Lovelace', "the owner renames their agent (tidied to 'Ada Lovelace') and the owner's runner saves it");
+  kevin.send({ t: 'rename', agentId, name: '<b>x</b>' });
+  await kevin.wait((m) => m.t === 'error' && /letters, numbers/.test(m.text), 'bad name refused');
+  kevin.send({ t: 'hire', deskId: 9, agentId: null, name: 'ada lovelace', task: { kind: 'general' } });
+  await kevin.wait((m) => m.t === 'error' && /already an agent called/.test(m.text), 'duplicate refused');
+  check(true, 'names with markup, and names already used in the office, are refused');
+  kevin.send({ t: 'hire', deskId: 9, agentId: null, name: 'Grace', task: { kind: 'general' } });
+  const grace = await kevin.wait((m) => m.t === 'state' && m.state.agents.some((a) => a.name === 'Grace' && a.deskId === 9), 'named recruit');
+  check(grace.state.agents.find((a) => a.name === 'Grace').owner === 'Kevin', 'a new recruit can be named when hired');
+  kevin.send({ t: 'dismiss', agentId: grace.state.agents.find((a) => a.name === 'Grace').id });
+
   // --- a second office: owner-only creation, and nothing crosses between offices
   alice.send({ t: 'create-office', name: 'Sneaky', adminName: 'Alice' });
   await alice.wait((m) => m.t === 'error' && /owner/.test(m.text), 'non-owner cannot create offices');

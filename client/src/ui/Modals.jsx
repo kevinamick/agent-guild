@@ -3,6 +3,7 @@ import { useGame, send, openModal, closeModal, signOut } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { LevelBadge, XpBar, SkillChips, EngineChip } from './Hud.jsx';
 import { useHost } from '../host.js';
+import { cleanAgentName, sameName, AGENT_NAME_MAX } from '../../../shared/names.js';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -203,11 +204,15 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
   const [engineChoice, setEngineChoice] = useState(null);
   const engine = [engineChoice, agents[effective]?.engine].find((e) => e && engines.some((x) => x.id === e)) || engines[0]?.id;
 
+  const [recruitName, setRecruitName] = useState('');
+  const nameProblem = effective === 'new' && recruitName.trim() ? agentNameProblem(recruitName, agents) : null;
   const hire = () => {
     if (effective === 'new' && !haveRunner) return;
+    if (nameProblem) return;
     send({
       t: 'hire',
       deskId,
+      name: effective === 'new' && recruitName.trim() ? recruitName.trim() : undefined,
       agentId: effective === 'new' ? null : effective,
       task: text.trim() ? { text: text.trim(), kind, title, ref } : { kind },
       worktree,
@@ -233,6 +238,18 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
           <div className={`pick ${effective === 'new' ? 'on' : ''} ${haveRunner ? '' : 'disabled'}`} onClick={() => haveRunner && setChoice('new')}>
             <div className="pick-main">✨ <b>New recruit</b> <span className="muted small">Lv 1 · empty playbook · runs on your machine</span></div>
             {!haveRunner && <div className="muted small">Start your runner to recruit your own agents</div>}
+            {effective === 'new' && haveRunner && (
+              <div className="recruit-name" onClick={(e) => e.stopPropagation()}>
+                <input
+                  className="input"
+                  value={recruitName}
+                  maxLength={AGENT_NAME_MAX}
+                  placeholder="Name it (optional, e.g. Ada)"
+                  onChange={(e) => setRecruitName(e.target.value)}
+                />
+                {nameProblem && <span className="name-error small">{nameProblem}</span>}
+              </div>
+            )}
           </div>
           {candidates.map((a, i) => {
             const lessons = a.lessons?.[kind] || 0;
@@ -419,10 +436,64 @@ export function RosterModal() {
   );
 }
 
+// Why a proposed agent name won't do (or null): the shared rules plus
+// uniqueness within the office, checked as you type; the server checks again.
+function agentNameProblem(raw, agents, exceptId) {
+  const checked = cleanAgentName(raw);
+  if (checked.error) return checked.error;
+  if (Object.values(agents).some((a) => a.id !== exceptId && sameName(a.name, checked.name))) return `There's already an agent called ${checked.name}.`;
+  return null;
+}
+
+// The agent card's title, with an inline rename for the owner or an admin.
+function AgentNameTitle({ agent, canRename }) {
+  const agents = useGame((s) => s.agents);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(agent.name);
+  const problem = editing && draft.trim() !== agent.name ? agentNameProblem(draft, agents, agent.id) : null;
+  const save = () => {
+    if (problem) return;
+    if (draft.trim() && draft.trim() !== agent.name) send({ t: 'rename', agentId: agent.id, name: draft.trim() });
+    setEditing(false);
+  };
+  if (!editing)
+    return (
+      <span className="agent-title">
+        🤖 {agent.name}
+        {canRename && (
+          <button className="btn small-btn" title="Rename this agent" onClick={() => (setDraft(agent.name), setEditing(true))}>
+            ✏️ Rename
+          </button>
+        )}
+      </span>
+    );
+  return (
+    <form
+      className="agent-title"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save();
+      }}
+      onKeyDown={(e) => {
+        e.stopPropagation(); // Esc cancels the rename, not the whole card
+        if (e.key === 'Escape') setEditing(false);
+      }}
+    >
+      🤖{' '}
+      <input className="input rename-input" autoFocus value={draft} maxLength={AGENT_NAME_MAX} onChange={(e) => setDraft(e.target.value)} aria-label="Agent name" />
+      <button className="btn primary small-btn" disabled={Boolean(problem) || !draft.trim()}>Save</button>
+      <button type="button" className="btn small-btn" onClick={() => setEditing(false)}>Cancel</button>
+      {problem && <span className="name-error small">{problem}</span>}
+      {agent.deskId && !problem && <span className="muted small">Its current session keeps the old name until it restarts.</span>}
+    </form>
+  );
+}
+
 export function AgentModal({ agentId }) {
   const agent = useGame((s) => s.agents[agentId]);
   const pb = useGame((s) => s.playbooks[agentId]);
   const myName = useGame((s) => s.myName);
+  const admin = useGame((s) => s.admin);
   const [tab, setTab] = useState(null);
   useEffect(() => send({ t: 'playbook', agentId }), [agentId]);
   if (!agent) return null;
@@ -433,7 +504,7 @@ export function AgentModal({ agentId }) {
   const overall = progress(agent.total / 1.5);
 
   return (
-    <Modal title={`🤖 ${agent.name}`} wide>
+    <Modal title={<AgentNameTitle agent={agent} canRename={mine || admin} />} wide>
       <div className="modal-body agent-card">
         <div className="agent-hero">
           <div className="avatar" style={{ background: agent.color }}>{agent.name[0]}</div>

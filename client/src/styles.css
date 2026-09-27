@@ -272,3 +272,11 @@ body[data-upstairs='1'] .floor-label { display: none; }
 .tv-modal-body { position: relative; flex: 1; min-height: 0; background: #000; display: grid; place-items: center; }
 .tv-modal-body video { display: block; width: 100%; max-height: calc(100vh - 150px); object-fit: contain; background: #000; }
 .tv-modal-wait { position: absolute; inset: 0; display: grid; place-items: center; color: #cbd5e1; font-weight: 800; }
+
+/* naming agents */
+.agent-title { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 17px; font-weight: 900; }
+.small-btn { padding: 2px 8px; font-size: 12px; }
+.rename-input { width: 200px; font-size: 15px; padding: 4px 8px; }
+.recruit-name { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.recruit-name .input { max-width: 280px; }
+.name-error { color: #b91c1c; font-weight: 700; }

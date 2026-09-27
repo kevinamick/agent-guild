@@ -12,6 +12,7 @@ import { DESKS, deskById, nearestFreeDesk, MEZZ, PICTURE_SPOTS } from '../shared
 import { createKeyStore } from './keys.js';
 import { createPictureStore } from './pictures.js';
 import { sanitizeAvatar, randomAvatar } from '../shared/avatar.js';
+import { cleanAgentName, sameName } from '../shared/names.js';
 import {
   SKILLS, SKILL_INFO, KUDOS_XP, emptyXp, levelFor, overallLevel, titleFor, bestSkill, turnXp, totalXp,
 } from '../shared/progression.js';
@@ -244,10 +245,12 @@ function createOffice(officeId, officeName, dataDir) {
 
   // ---------------------------------------------------------------- agents
 
-  function newProfile(owner) {
-    const taken = new Set([...profiles.values()].map((p) => p.name));
-    const pool = NAMES.filter((n) => !taken.has(n));
-    const name = pool.length ? pool[Math.floor(Math.random() * pool.length)] : `Bot-${profiles.size + 1}`;
+  // Names are unique within an office so "Ada" always means one agent.
+  const nameTaken = (name, exceptId) => [...profiles.values()].some((p) => p.id !== exceptId && sameName(p.name, name));
+
+  function newProfile(owner, wanted) {
+    const pool = NAMES.filter((n) => !nameTaken(n));
+    const name = wanted || (pool.length ? pool[Math.floor(Math.random() * pool.length)] : `Bot-${profiles.size + 1}`);
     const id = crypto.randomBytes(5).toString('hex');
     const profile = {
       id,
@@ -263,7 +266,7 @@ function createOffice(officeId, officeName, dataDir) {
     return profile;
   }
 
-  function hire(player, { deskId, agentId, task, worktree, engine: wanted }) {
+  function hire(player, { deskId, agentId, task, worktree, engine: wanted, name: wantedName }) {
     const occupied = new Set(desks.keys());
     const desk = deskId && !occupied.has(deskId) ? deskById(deskId) : nearestFreeDesk(occupied, player);
     if (!desk) return send(player.ws, { t: 'error', text: 'Every desk is taken. Send someone home first.' });
@@ -277,7 +280,14 @@ function createOffice(officeId, officeName, dataDir) {
       if (!runnerFor(player.name)) {
         return send(player.ws, { t: 'error', text: 'Start your runner to recruit your own agents, or borrow a coworker\'s.' });
       }
-      profile = newProfile(player.name);
+      let name = null;
+      if (wantedName && String(wantedName).trim()) {
+        const checked = cleanAgentName(wantedName);
+        if (checked.error) return send(player.ws, { t: 'error', text: checked.error });
+        if (nameTaken(checked.name)) return send(player.ws, { t: 'error', text: `There's already an agent called ${checked.name} in this office.` });
+        name = checked.name;
+      }
+      profile = newProfile(player.name, name);
     }
 
     const runner = runnerFor(profile.owner);
@@ -447,6 +457,25 @@ function createOffice(officeId, officeName, dataDir) {
       case 'dismiss':
         dismiss(msg.agentId, player.name);
         break;
+      case 'rename': {
+        const p = profiles.get(msg.agentId);
+        if (!p) return;
+        // The owner names their agents; an office admin can fix a name too.
+        if (!sameName(p.owner, player.name) && !player.admin) return send(player.ws, { t: 'error', text: `Only ${p.owner} or an admin can rename ${p.name}.` });
+        const checked = cleanAgentName(msg.name);
+        if (checked.error) return send(player.ws, { t: 'error', text: checked.error });
+        if (checked.name === p.name) return;
+        if (nameTaken(checked.name, p.id)) return send(player.ws, { t: 'error', text: `There's already an agent called ${checked.name} in this office.` });
+        const old = p.name;
+        p.name = checked.name;
+        saveProfiles();
+        // The owner's runner keeps its own copy; the agent uses the new name from its next session.
+        const runner = runnerFor(p.owner);
+        if (runner) send(runner.ws, { t: 'profile', agent: runnerAgent(p.id) });
+        toast(`✏️ ${player.name} renamed ${old} to ${p.name}${live.get(p.id)?.deskId ? ' (from its next session)' : ''}`);
+        pushState();
+        break;
+      }
       case 'kudos': {
         const l = live.get(msg.agentId);
         const p = profiles.get(msg.agentId);
