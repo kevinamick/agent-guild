@@ -3,6 +3,8 @@ import { useGame, send, openModal } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { progress, badgeTier, SKILL_INFO } from '../../../shared/progression.js';
 import { useHost } from '../host.js';
+import { SoundButton } from './Sound.jsx';
+import { VoiceButton, VoicePanel, VoiceBadge } from './Voice.jsx';
 
 export function XpBar({ xp, color = '#a855f7', thin }) {
   const p = progress(xp);
@@ -53,7 +55,10 @@ export function TopRight() {
         <button className="btn" onClick={() => openModal({ type: 'board', kind: 'prs' })}>🔀 PRs</button>
         <button className="btn" onClick={() => openModal({ type: 'team' })}>👥 Team</button>
         <button className="btn" onClick={() => openModal({ type: 'help' })}>?</button>
+        <VoiceButton />
+        <SoundButton />
       </div>
+      <VoicePanel />
       <OfficeList />
       <Workers />
     </div>
@@ -71,6 +76,7 @@ function OfficeList() {
           <span className="dot" style={{ background: p.color }} />
           <b>{p.name}</b>
           {p.id === me && <span className="muted">(you)</span>}
+          <VoiceBadge id={p.id} />
         </div>
       ))}
     </div>

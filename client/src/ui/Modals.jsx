@@ -521,6 +521,7 @@ export function HelpModal() {
           <kbd>C</kbd><span>view the agent's card and playbook</span>
           <kbd>X</kbd><span>send the agent home (it keeps its XP and playbook)</span>
           <kbd>T</kbd><span>chat</span>
+          <kbd>M</kbd><span>mute or unmute your mic (after 🎙️ Join voice; you hear people near you)</span>
           <kbd>G</kbd><span>Guild Hall leaderboard</span>
           <kbd>Ctrl ]</kbd><span>step away from a terminal</span>
         </div>
