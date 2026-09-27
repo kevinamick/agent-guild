@@ -6,6 +6,7 @@ import { TerminalModal } from './ui/Terminal.jsx';
 import { CharacterModal } from './ui/Character.jsx';
 import { BoardModal, HireModal, PromptModal, RosterModal, AgentModal, HelpModal, TeamModal } from './ui/Modals.jsx';
 import { PictureModal, interactPicture } from './ui/PictureModal.jsx';
+import { Soundscape } from './ui/Sound.jsx';
 
 
 function readSaved() {
@@ -170,6 +171,7 @@ function Game() {
       <Toasts />
       <ModalRouter />
       <ReconnectBanner />
+      <Soundscape />
     </>
   );
 }
