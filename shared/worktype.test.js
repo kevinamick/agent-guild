@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectKind, kindFromPrompt, isEditTool } from './worktype.js';
+import { detectKind, kindFromPrompt, isEditTool, isWebTool, isReadTool } from './worktype.js';
 
 test('a review: asked to review, read the PR, no edits', () => {
   assert.equal(detectKind({ prompt: 'Review pull request #12', commands: ['gh pr view 12 --comments', 'gh pr diff 12'] }), 'review');
@@ -49,4 +49,21 @@ test('the prompt alone, for picking the lesson file before work starts', () => {
 test('edit tools across Claude and Copilot', () => {
   for (const t of ['Edit', 'Write', 'MultiEdit', 'edit', 'create', 'str_replace_editor']) assert.ok(isEditTool(t), t);
   for (const t of ['Read', 'Bash', 'view', 'write_bash', 'grep']) assert.ok(!isEditTool(t), t);
+});
+
+test('research: looking things up and reading around without changing code', () => {
+  assert.equal(detectKind({ prompt: 'Research the best way to add offline sync', web: 2, reads: 4 }), 'research');
+  assert.equal(detectKind({ prompt: 'what are the pros and cons of Vite vs Rspack for us?', commands: ['npm view rspack version'] }), 'research');
+  assert.equal(detectKind({ prompt: 'how does auth work in this repo?', reads: 8 }), 'research');
+  assert.equal(detectKind({ prompt: 'look into why the build is slow', commands: ['curl -s https://vitejs.dev/guide/performance'], reads: 3 }), 'research');
+  assert.equal(kindFromPrompt('Investigate options for replacing our ORM'), 'research');
+});
+
+test('research stays apart from reviews and fixes', () => {
+  // A review reads a lot too, but its commands say review.
+  assert.equal(detectKind({ prompt: 'review PR 3', commands: ['gh pr diff 3'], reads: 10 }), 'review');
+  // Researching and then changing code is building.
+  assert.equal(detectKind({ prompt: 'investigate the crash and fix it', commands: ['npm test'], edits: 3, reads: 6 }), 'issue');
+  assert.ok(isWebTool('WebFetch') && isWebTool('web_fetch') && !isWebTool('Bash'));
+  assert.ok(isReadTool('Read') && isReadTool('view') && !isReadTool('Edit'));
 });

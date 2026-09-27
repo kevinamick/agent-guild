@@ -71,6 +71,7 @@ When you finish a task, and before your final reply, decide whether you learned 
 - fixing an issue or building a feature → issue.md
 - reviewing a pull request → review.md
 - resolving merge conflicts or rebasing → conflict.md
+- researching, investigating or comparing options (findings, not code changes) → research.md
 - anything else → general.md
 Rules: write one lesson per "- " bullet, make it concise and specific to this repo, merge or rewrite duplicates rather than appending near-copies, and stay within that skill's lesson limit by dropping the least useful lesson. Skip trivial chats. Don't mention playbook upkeep in your reply unless asked.`;
 }

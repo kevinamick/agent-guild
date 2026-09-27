@@ -18,7 +18,7 @@ import { ADAPTERS, customAdapter, explainMissing, parseCliList, resolveBin, spaw
 import { latestVersion, newer, npxCacheDir, npxCommand, retireDir, sweepRetired } from './update.js';
 import { detectProvider, loadBoard, PR_COMMANDS, prHost, prHeadFromCommand, prKey } from './providers.js';
 import { POLL, readTracked, writeTracked, newTracked, observe, failed, unacked, pruneTracked, outcomeMessage, prFromHook } from './outcomes.js';
-import { detectKind, kindFromPrompt, isEditTool } from '../shared/worktype.js';
+import { detectKind, kindFromPrompt, isEditTool, isWebTool, isReadTool } from '../shared/worktype.js';
 import { createCostTracker, copilotTranscript } from './cost.js';
 
 const run = promisify(execFile);
@@ -329,6 +329,8 @@ function onHook(agentId, event, body) {
       const cmd = String(body.tool_input?.command || '');
       if (cmd && s.turn.commands.length < 60) s.turn.commands.push(cmd.slice(0, 400));
       if (isEditTool(body.tool_name)) s.turn.edits++;
+      if (isWebTool(body.tool_name)) s.turn.web++;
+      if (isReadTool(body.tool_name)) s.turn.reads++;
       // Asking the user a question is a raised hand, not work.
       if (ASK_TOOLS.test(String(body.tool_name || ''))) {
         status('waiting', 'has a question for you');
@@ -361,7 +363,7 @@ function onHook(agentId, event, body) {
         // XP goes to the kind of work this turn turned out to be.
         const kind = detectKind(turn) || s.meta?.kind || 'general';
         s.meta = { ...s.meta, kind };
-        const { prompt, commands, edits, start, prs, prHead, ...rest } = turn;
+        const { prompt, commands, edits, web, reads, start, prs, prHead, ...rest } = turn;
         status('done', s.lastActivity || 'done', { kind });
         const stats = { ...rest, kind, durationMs: Date.now() - start };
         // What the turn cost, from the transcript. Best effort: without it the turn still counts.
@@ -390,7 +392,7 @@ function hookReply(agentId, event) {
 }
 
 function newTurn(prompt) {
-  return { start: Date.now(), toolCalls: 0, prOpened: false, prMerged: false, reviewed: false, prompt, commands: [], edits: 0, prs: [], prHead: null };
+  return { start: Date.now(), toolCalls: 0, prOpened: false, prMerged: false, reviewed: false, prompt, commands: [], edits: 0, web: 0, reads: 0, prs: [], prHead: null };
 }
 
 const hookServer = http.createServer((req, res) => {

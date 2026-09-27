@@ -143,6 +143,8 @@ export function BoardModal({ kind }) {
 // Briefs for Azure DevOps repos use the Azure CLI's azure-devops extension,
 // which picks up the organization and project from the git remote.
 function adoBrief(skill, item) {
+  if (skill === 'research')
+    return `Research Azure DevOps work item #${item.number}: "${item.title}".\n\nRead it first with \`az boards work-item show --id ${item.number}\`. Investigate the codebase and any relevant docs, then write up what you found: how things work today, the options with their pros and cons, and your recommendation. Don't change any code.`;
   if (skill === 'issue')
     return `Work on Azure DevOps work item #${item.number}: "${item.title}".\n\nRead it first with \`az boards work-item show --id ${item.number}\`. Create a new branch, implement the change, verify it, push the branch, then open a pull request with \`az repos pr create --work-items ${item.number}\` so the work item is linked.`;
   if (skill === 'review')
@@ -160,7 +162,9 @@ function ItemDetail({ kind, item, bounty, onClose }) {
   const hireFor = (skill) => {
     const text = host.ado
       ? adoBrief(skill, item)
-      : skill === 'issue'
+      : skill === 'research'
+        ? `Research GitHub issue #${item.number}: "${item.title}".\n\nRead it first with \`gh issue view ${item.number} --comments\`. Investigate the codebase and any relevant docs, then write up what you found: how things work today, the options with their pros and cons, and your recommendation. Don't change any code.`
+        : skill === 'issue'
         ? `Work on GitHub issue #${item.number}: "${item.title}".\n\nRead it first with \`gh issue view ${item.number} --comments\`. Create a new branch, implement the change, verify it, then open a pull request that closes #${item.number}.`
         : skill === 'review'
           ? `Review pull request #${item.number}: "${item.title}".\n\nUse \`gh pr view ${item.number} --comments\` and \`gh pr diff ${item.number}\`. Look for bugs, risky changes and missing tests, then give me a short summary with concrete suggestions. Don't push any commits.`
@@ -209,6 +213,7 @@ function ItemDetail({ kind, item, bounty, onClose }) {
           <a href={item.url} target="_blank" rel="noreferrer" className="muted small">Open on {host.ado ? 'Azure DevOps' : 'GitHub'} ↗</a>
           <span className="grow" />
           {isIssue && item.state === 'OPEN' && <button className="btn primary" onClick={() => hireFor('issue')}>🤖 Hand to a worker</button>}
+          {isIssue && item.state === 'OPEN' && <button className="btn" onClick={() => hireFor('research')}>🔬 Research this</button>}
           {!isIssue && item.state === 'OPEN' && item.mergeable === 'CONFLICTING' && (
             <button className="btn warn" onClick={() => hireFor('conflict')}>🔀 Resolve conflicts</button>
           )}
@@ -229,7 +234,8 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
   // The brief says what kind of work it is, unless you pick one yourself.
   const [pickedKind, setKind] = useState(initialKind !== 'general' ? initialKind : null);
   const kind = pickedKind || kindFromPrompt(text) || 'general';
-  const [worktree, setWorktree] = useState(Boolean(initialText) && initialKind !== 'review');
+  // Reviews and research read the repo rather than change it, so they don't need a branch.
+  const [worktree, setWorktree] = useState(Boolean(initialText) && initialKind !== 'review' && initialKind !== 'research');
   const mine = (a) => a.owner.toLowerCase() === myName.toLowerCase();
   const haveRunner = runners.some((r) => r.owner.toLowerCase() === myName.toLowerCase());
 

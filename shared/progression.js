@@ -1,12 +1,13 @@
 // XP, levels, titles and cosmetics. Shared by the server (authoritative ledger),
 // the runner (playbook capacity) and the client (display).
 
-export const SKILLS = ['issue', 'review', 'conflict', 'general'];
+export const SKILLS = ['issue', 'review', 'conflict', 'research', 'general'];
 
 export const SKILL_INFO = {
   issue: { label: 'Issue Fixer', short: 'Fix', color: '#f472b6', icon: '📌' },
   review: { label: 'Reviewer', short: 'Rev', color: '#60a5fa', icon: '🔍' },
   conflict: { label: 'Conflict Resolver', short: 'Merge', color: '#f59e0b', icon: '🔀' },
+  research: { label: 'Researcher', short: 'Res', color: '#a78bfa', icon: '🔬' },
   general: { label: 'Generalist', short: 'Gen', color: '#34d399', icon: '🧰' },
 };
 

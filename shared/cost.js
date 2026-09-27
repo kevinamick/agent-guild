@@ -62,7 +62,7 @@ export function formatCost(amount, unit) {
   return `≈$${amount >= 100 ? Math.round(amount) : amount.toFixed(2)}`;
 }
 
-const SKILL_NOUN = { issue: 'fix', review: 'review', conflict: 'merge', general: 'task' };
+const SKILL_NOUN = { issue: 'fix', review: 'review', conflict: 'merge', research: 'research task', general: 'task' };
 
 // "≈$0.40/review" (compact) or "≈$0.40 per review".
 export function formatPerTask({ amount, unit }, skill, compact = false) {
