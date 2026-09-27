@@ -97,9 +97,10 @@ test('Copilot hooks carry both bash and PowerShell commands', () => {
     assert.equal(!/>\/dev\/null 2>&1/.test(entry[0].bash), event === 'userPromptSubmitted');
   }
   assert.match(hooks.agentStop[0].powershell, /\/Stop'/);
-  // A permission prompt raises the hand even if Copilot's notification hook never fires.
-  assert.match(hooks.permissionRequest[0].powershell, /\/PermissionRequest'/);
+  // Copilot fires permissionRequest even for allowed tools, so only notification raises the hand.
+  assert.equal(hooks.permissionRequest, undefined);
   assert.match(hooks.notification[0].bash, /\/Notification /);
+  assert.match(hooks.postToolUse[0].powershell, /\/PostToolUse'/);
   assert.match(hooks.userPromptSubmitted[0].powershell, /\)\.Content/);
   assert.deepEqual(JSON.parse(ADAPTERS.copilot.hookReply('note')), { additionalContext: 'note' });
 });

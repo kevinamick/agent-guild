@@ -335,7 +335,9 @@ async function main() {
   kevin2.send({ t: 'input', agentId, data: 'this needs permission\r' });
   await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.status === 'waiting', 'hand raised');
   await sleep(1200);
-  check(agentIn(kevin2, agentId).status === 'waiting' && /needs permission/.test(agentIn(kevin2, agentId).activity), 'a permission request raises the hand, and a late tool hook doesn\'t lower it');
+  check(agentIn(kevin2, agentId).status === 'waiting' && /Permission needed/.test(agentIn(kevin2, agentId).activity), 'a permission prompt raises the hand, and a late tool hook doesn\'t lower it');
+  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.status === 'working', 'hand lowered', 5000);
+  check(true, 'once the tool has run (the prompt was answered) the hand goes down');
   await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.status === 'done', 'done after permission', 20000);
   const lessons4 = await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.lessons?.conflict > 0, 'conflict lesson', 10000);
   check(Boolean(lessons4), 'the agent wrote its lesson to the playbook file the task note named (conflict.md)');

@@ -331,8 +331,9 @@ function onHook(agentId, event, body) {
     case 'Notification':
       status('waiting', body.message || 'needs your input');
       break;
-    case 'PermissionRequest':
-      status('waiting', `needs permission: ${describeTool(body.tool_name || 'a tool', body.tool_input || {})}`);
+    // A tool finished, so any permission prompt was answered: lower the hand.
+    case 'PostToolUse':
+      if (s.status === 'waiting' && s.turn) status('working', s.lastActivity || 'working');
       break;
     case 'Stop': {
       const turn = s.turn;

@@ -19,7 +19,9 @@ export const ADAPTERS = {
       for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification']) {
         hooks[event] = [{ hooks: [{ type: 'command', command: hookCommand(hookUrl, event, event === 'UserPromptSubmit') }] }];
       }
-      hooks.PreToolUse = [{ matcher: '*', hooks: [{ type: 'command', command: hookCommand(hookUrl, 'PreToolUse') }] }];
+      for (const event of ['PreToolUse', 'PostToolUse']) {
+        hooks[event] = [{ matcher: '*', hooks: [{ type: 'command', command: hookCommand(hookUrl, event) }] }];
+      }
       const settingsFile = path.join(dir, 'claude-settings.json');
       fs.writeFileSync(settingsFile, JSON.stringify({ hooks }));
       const args = [
@@ -48,10 +50,11 @@ export const ADAPTERS = {
         path.join(pluginDir, 'plugin.json'),
         JSON.stringify({ name: 'agent-guild', version: '1.0.0', description: 'Reports agent status to the Agent Guild office' }),
       );
-      // permissionRequest comes just before notification when Copilot asks to run something.
+      // Not permissionRequest: Copilot fires it for every tool, even ones already allowed.
+      // A real prompt comes with a notification.
       const map = {
-        sessionStart: 'SessionStart', userPromptSubmitted: 'UserPromptSubmit', preToolUse: 'PreToolUse', agentStop: 'Stop',
-        notification: 'Notification', permissionRequest: 'PermissionRequest',
+        sessionStart: 'SessionStart', userPromptSubmitted: 'UserPromptSubmit', preToolUse: 'PreToolUse', postToolUse: 'PostToolUse',
+        agentStop: 'Stop', notification: 'Notification',
       };
       // Copilot runs `bash` on macOS/Linux and `powershell` on Windows.
       const psCommand = (event, reply) =>

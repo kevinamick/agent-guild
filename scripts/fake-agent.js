@@ -37,10 +37,12 @@ async function work(text) {
     // Like Copilot on Windows: hooks stamped with times, arriving out of order.
     const t = Date.now();
     await hook('PreToolUse', { tool_name: 'bash', tool_input: { command: 'rm -rf build' }, timestamp: t });
-    await hook('PermissionRequest', { toolName: 'bash', toolInput: { command: 'rm -rf build' }, timestamp: t + 2 });
+    await hook('Notification', { message: 'Permission needed: rm -rf build', notification_type: 'permission_prompt', timestamp: t + 2 });
     await hook('PreToolUse', { tool_name: 'bash', tool_input: { command: 'rm -rf build' }, timestamp: t + 1 });
     out('\x1b[33mAllow bash: rm -rf build? (y/n)\x1b[0m\r\n');
     await sleep(2500);
+    await hook('PostToolUse', { tool_name: 'bash', tool_input: { command: 'rm -rf build' }, timestamp: Date.now() });
+    await sleep(1500);
   }
   for (const [tool_name, tool_input] of steps) {
     await hook('PreToolUse', { tool_name, tool_input });
