@@ -12,6 +12,8 @@ import { Instanced } from './Instanced.jsx';
 import { Plants } from './Plants.jsx';
 import { view } from './view.js';
 import { useCameraMode } from './cameraMode.js';
+import { signLines } from './neon.js';
+import { useGame } from '../net.js';
 
 const W = ROOM.maxX - ROOM.minX;
 const D = ROOM.maxZ - ROOM.minZ;
@@ -275,17 +277,22 @@ function drawNeon(c, { lines, font, glow, tube }) {
   pass(0, 'transparent', 2.5, '#fffaf6');
 }
 
-// A neon sign's texture; redrawn once the web font has loaded (the canvas falls back to a system font until then).
+// A neon sign's texture; redrawn when its text changes, and once the web font has
+// loaded (the canvas falls back to a system font until then).
 export function useNeonTexture(spec, w = 1024, h = 640) {
   const tex = useMemo(() => {
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
-    drawNeon(c, spec);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }, []);
+  const key = JSON.stringify(spec);
+  useMemo(() => {
+    drawNeon(tex.image, spec);
+    tex.needsUpdate = true;
+  }, [tex, key]);
   useEffect(() => {
     let alive = true;
     document.fonts?.load(spec.font).then(() => {
@@ -295,16 +302,22 @@ export function useNeonTexture(spec, w = 1024, h = 640) {
     });
     return () => {
       alive = false;
-      tex.dispose();
     };
-  }, [tex]);
+  }, [tex, key]);
+  useEffect(() => () => tex.dispose(), [tex]);
   return tex;
 }
 
-const SIGN = { lines: [['Agent', 0.3], ['Guild', 0.72]], font: 'italic 800 230px Nunito, system-ui, sans-serif', glow: 'rgba(255,104,86,1)', tube: '#ff9f86' };
+const SIGN = { glow: 'rgba(255,104,86,1)', tube: '#ff9f86' };
 
+// The office's own name, in neon on the moss wall.
 function NeonSign() {
-  const tex = useNeonTexture(SIGN);
+  const name = useGame((s) => s.office?.name);
+  const spec = useMemo(() => {
+    const { lines, px } = signLines(name);
+    return { ...SIGN, lines, font: `italic 800 ${px}px Nunito, system-ui, sans-serif` };
+  }, [name]);
+  const tex = useNeonTexture(spec);
   return (
     <group position={[0, 6.05, BACK + 0.2]}>
       <mesh>
