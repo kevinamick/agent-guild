@@ -14,6 +14,7 @@ const PORT = 4700 + Math.floor(Math.random() * 200);
 const SERVER = `ws://localhost:${PORT}`;
 const KEYS = { Kevin: 'ag_kevin_test_key', Alice: 'ag_alice_test_key' };
 const procs = [];
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 const repo = path.join(TMP, 'repo');
 fs.mkdirSync(repo);
@@ -158,6 +159,43 @@ async function main() {
   await sleep(300);
   check(lee.closed === null, "revoking 'Lee' from the main office doesn't touch Lab's Lee");
 
+  // --- wall pictures: per office, only the uploader or an admin can take one down
+  const pictureAt = (p, spot) => p.state.pictures?.find((x) => x.spot === spot);
+  kevin.send({ t: 'picture', spot: 'l1', data: PNG_1PX, caption: 'Offsite' });
+  await alice.wait((m) => m.t === 'state' && m.state.pictures.some((x) => x.spot === 'l1'), 'picture reaches Alice');
+  const pic = pictureAt(alice, 'l1');
+  check(pic.by === 'Kevin' && pic.caption === 'Offsite' && /^\/pictures\/main\/[a-f0-9]{32}\.png$/.test(pic.url), 'a picture Kevin hangs shows up for Alice, credited to Kevin');
+  await sleep(300);
+  check(!lee.state.pictures.length && !lee.events.some((m) => m.t === 'state' && m.state.pictures.length), "the picture never appears in Lab");
+  const img = await fetch(`http://localhost:${PORT}${pic.url}`);
+  const body = Buffer.from(await img.arrayBuffer());
+  check(img.status === 200 && img.headers.get('content-type') === 'image/png' && img.headers.get('access-control-allow-origin') === '*'
+    && img.headers.get('x-content-type-options') === 'nosniff' && body.equals(Buffer.from(PNG_1PX, 'base64')), 'the picture is served over HTTP as image/png with CORS');
+  const [, , , , file] = pic.url.split('/');
+  const misses = await Promise.all([`/pictures/lab/${file}`, `/pictures/main/${'0'.repeat(32)}.png`, '/pictures/main/..%2Fkeys.json', '/pictures/main/pictures.json']
+    .map((u) => fetch(`http://localhost:${PORT}${u}`).then((r) => r.status)));
+  check(misses.every((s) => s === 404), "another office's path, unknown ids and other files are 404");
+  alice.send({ t: 'picture-remove', spot: 'l1' });
+  await alice.wait((m) => m.t === 'error' && /Kevin or an admin can take/.test(m.text), 'alice cannot remove');
+  alice.send({ t: 'picture', spot: 'l1', data: PNG_1PX });
+  await alice.wait((m) => m.t === 'error' && /Kevin/.test(m.text) && /replace/.test(m.text), 'alice cannot replace');
+  check(pictureAt(kevin, 'l1')?.url === pic.url, "someone else can't take down or replace Kevin's picture");
+  await sleep(3100); // one upload every few seconds per person
+  alice.send({ t: 'picture', spot: 'r1', data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>').toString('base64') });
+  await alice.wait((m) => m.t === 'error' && /PNG, JPEG/.test(m.text), 'svg refused');
+  check(!pictureAt(kevin, 'r1'), 'an SVG upload is refused');
+  lee.send({ t: 'picture', spot: 'r1', data: PNG_1PX, caption: 'lab only' });
+  await lee.wait((m) => m.t === 'state' && m.state.pictures.some((x) => x.spot === 'r1'), 'lab picture');
+  await sleep(300);
+  check(!pictureAt(kevin, 'r1') && pictureAt(lee, 'r1').url.startsWith('/pictures/lab/'), "Lab's own picture stays in Lab");
+  await sleep(2800);
+  alice.send({ t: 'picture', spot: 'r2', data: PNG_1PX });
+  await kevin.wait((m) => m.t === 'state' && m.state.pictures.some((x) => x.spot === 'r2'), 'alice picture');
+  const alicePic = pictureAt(kevin, 'r2');
+  kevin.send({ t: 'picture-remove', spot: 'r2' });
+  await alice.wait((m) => m.t === 'event' && m.text === "🖼️ Kevin took down Alice's picture", 'admin removes');
+  check((await fetch(`http://localhost:${PORT}${alicePic.url}`)).status === 404, "the office admin took down Alice's picture and its file is gone");
+
   // --- server restart with the agent still at its desk
   alice.send({ t: 'sub', agentId });
   server.kill('SIGKILL');
@@ -181,6 +219,7 @@ async function main() {
   await lee2.ready;
   const lw = await lee2.wait((m) => m.t === 'welcome', 'lab after restart');
   check(lw.state.office.name === 'Lab', 'Lab and its key survive the restart');
+  check(pictureAt(kevin2, 'l1')?.url === pic.url && !pictureAt(kevin2, 'r2') && lw.state.pictures.length === 1, 'wall pictures survive the restart, each in its own office');
   kevin2.send({ t: 'dismiss', agentId });
   await sleep(300);
 }

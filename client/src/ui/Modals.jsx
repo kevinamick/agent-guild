@@ -7,7 +7,7 @@ import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
 
-function Modal({ title, children, onClose = closeModal, wide, className = '' }) {
+export function Modal({ title, children, onClose = closeModal, wide, className = '' }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);

@@ -4,6 +4,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { ROOM, PODS, DESKS, BOARDS, DOOR, MEZZ, STAIRS, WALL_HEIGHT, BOSS_DESK } from '../../../shared/layout.js';
 import { view } from './view.js';
+import { Pictures } from './Pictures.jsx';
 import { useGame } from '../net.js';
 
 const W = ROOM.maxX - ROOM.minX;
@@ -305,6 +306,7 @@ export function Office() {
       <Corkboard board={provider === 'ado' ? { ...BOARDS[0], label: 'Work Items' } : BOARDS[0]} items={openIssues} />
       <Corkboard board={BOARDS[1]} items={openPrs} />
       <GuildHall board={BOARDS[2]} agents={agents} />
+      <Pictures />
 
       {[[-18.6, -12.6], [18.6, -12.6], [-18.6, 12.4], [18.6, 12.4], [-16.5, 0.3], [16.5, 0.3], [-2.5, -12.9], [2.5, -12.9]].map(([x, z], i) => (
         <Plant key={i} position={[x, 0, z]} scale={i < 4 ? 1.4 : 1} />

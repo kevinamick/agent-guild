@@ -3,6 +3,7 @@ import { useGame, send, openModal } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { progress, badgeTier, SKILL_INFO } from '../../../shared/progression.js';
 import { useHost } from '../host.js';
+import { PictureBar } from './PictureModal.jsx';
 
 export function XpBar({ xp, color = '#a855f7', thin }) {
   const p = progress(xp);
@@ -109,6 +110,7 @@ export function InteractionBar() {
   const modal = useGame((s) => s.modal);
   const host = useHost();
   if (!focus || modal) return null;
+  if (focus.type === 'picture') return <PictureBar spot={focus.spot} />;
   const Key = ({ k, children }) => (
     <span className="keyhint">
       <kbd>{k}</kbd>

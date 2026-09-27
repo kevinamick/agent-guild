@@ -6,7 +6,7 @@ import { Office } from './Office.jsx';
 import { view } from './view.js';
 import { Person, Bot } from './Characters.jsx';
 import { useGame, positions, localPlayer, sendMove } from '../net.js';
-import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK } from '../../../shared/layout.js';
+import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK, PICTURE_SPOTS } from '../../../shared/layout.js';
 import { SKILL_INFO } from '../../../shared/progression.js';
 
 export const keys = new Set();
@@ -52,11 +52,15 @@ function findFocus(x, z, level) {
     const d = b.side ? Math.hypot(b.x - x, (b.z - z) * 0.45) : Math.hypot((b.x - x) * 0.45, b.z - z);
     if (d < 2.6) consider(d, { type: 'board', board: b.id });
   }
+  for (const s of PICTURE_SPOTS) {
+    if (Math.abs(s.x - x) > 2.6 || Math.abs(s.z - z) > 1.3) continue;
+    consider(Math.hypot((s.x - x) * 0.5, s.z - z), { type: 'picture', spot: s.id });
+  }
   return best;
 }
 
 function sameFocus(a, b) {
-  return a?.type === b?.type && a?.agentId === b?.agentId && a?.deskId === b?.deskId && a?.board === b?.board;
+  return a?.type === b?.type && a?.agentId === b?.agentId && a?.deskId === b?.deskId && a?.board === b?.board && a?.spot === b?.spot;
 }
 
 function LocalPlayer() {

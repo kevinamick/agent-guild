@@ -24,6 +24,7 @@ export const useGame = create(() => ({
   runners: [],
   agents: {},
   desks: {},
+  pictures: [], // wall pictures: { spot, url, by, caption, at }
   chat: [],
   toasts: [],
   fx: [], // floating XP / level-up effects
@@ -41,6 +42,8 @@ let retry = 0;
 
 // The office server can live on another host (e.g. Fly) than the page (e.g. Vercel).
 const SERVER = (import.meta.env.VITE_GUILD_SERVER || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`).replace(/\/$/, '');
+// The same server over HTTP(S), for files it serves (e.g. wall pictures).
+export const SERVER_HTTP = SERVER.replace(/^ws/, 'http');
 
 export function connect({ key }) {
   creds = { key };
@@ -119,7 +122,7 @@ function applyState(state) {
   }
   const ids = new Set(state.players.map((p) => p.id));
   for (const id of positions.keys()) if (!ids.has(id)) positions.delete(id);
-  useGame.setState({ office: state.office, players: state.players, runners: state.runners, agents, desks: state.desks });
+  useGame.setState({ office: state.office, players: state.players, runners: state.runners, agents, desks: state.desks, pictures: state.pictures || [] });
 }
 
 function handle(msg) {

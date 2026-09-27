@@ -8,8 +8,9 @@ import crypto from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { DESKS, deskById, nearestFreeDesk, MEZZ } from '../shared/layout.js';
+import { DESKS, deskById, nearestFreeDesk, MEZZ, PICTURE_SPOTS } from '../shared/layout.js';
 import { createKeyStore } from './keys.js';
+import { createPictureStore } from './pictures.js';
 import { sanitizeAvatar, randomAvatar } from '../shared/avatar.js';
 import {
   SKILLS, SKILL_INFO, KUDOS_XP, emptyXp, levelFor, overallLevel, titleFor, bestSkill, turnXp, totalXp,
@@ -106,6 +107,7 @@ function createOffice(officeId, officeName, dataDir) {
   const boardCache = new Map();
   const pendingRunnerReplies = new Map();
   const killOnReconnect = new Set(); // sent home while their runner was away
+  const pictures = createPictureStore(path.join(dataDir, 'pictures'), PICTURE_SPOTS);
 
   // ---------------------------------------------------------------- persistence
 
@@ -156,6 +158,7 @@ function createOffice(officeId, officeName, dataDir) {
       runners: [...runners.values()].filter((r) => r.ready).map(({ id, owner, repo, lend, engines }) => ({ id, owner, repo, lend, engines })),
       agents: [...profiles.keys()].map(agentView),
       desks: Object.fromEntries(desks),
+      pictures: pictures.list().map(({ spot, file, by, caption, at }) => ({ spot, url: `/pictures/${officeId}/${file}`, by, caption, at })),
     };
   }
 
@@ -374,6 +377,23 @@ function createOffice(officeId, officeName, dataDir) {
         saveAvatar(officeId, player.name, player.avatar);
         pushState();
         break;
+      case 'picture': {
+        // Uploads are up to 1.5 MB each, so one every few seconds per person is plenty.
+        if (Date.now() - (player.pictureAt || 0) < 3000) return send(player.ws, { t: 'error', text: 'One picture at a time, please.' });
+        player.pictureAt = Date.now();
+        const result = pictures.hang(String(msg.spot), msg.data, msg.caption, player);
+        if (result.error) return send(player.ws, { t: 'error', text: result.error });
+        toast(`🖼️ ${player.name} ${result.replaced ? 'replaced' : 'hung'} a picture`);
+        pushState();
+        break;
+      }
+      case 'picture-remove': {
+        const result = pictures.remove(String(msg.spot), player);
+        if (result.error) return send(player.ws, { t: 'error', text: result.error });
+        toast(`🖼️ ${player.name} took down ${result.by === player.name ? 'their' : `${result.by}'s`} picture`);
+        pushState();
+        break;
+      }
       case 'prompt': {
         const l = live.get(msg.agentId);
         const text = String(msg.text || '').trim();
@@ -708,6 +728,7 @@ function createOffice(officeId, officeName, dataDir) {
   return {
     connectRunner,
     connectPlayer,
+    pictureFile: pictures.file,
     stats: () => ({ players: players.size, runners: runners.size, agents: profiles.size }),
   };
 }
@@ -734,6 +755,7 @@ const server = http.createServer((req, res) => {
     const sum = (k) => totals.reduce((n, t) => n + t[k], 0);
     return res.end(JSON.stringify({ ok: true, offices: offices.size, players: sum('players'), runners: sum('runners'), agents: sum('agents') }));
   }
+  if (url.pathname.startsWith('/pictures/')) return servePicture(url.pathname, req, res);
   let file = path.join(DIST, path.normalize(url.pathname).replace(/^(\.\.[/\\])+/, ''));
   if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
   if (!fs.existsSync(file)) {
@@ -743,6 +765,28 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);
 });
+
+// Wall pictures: /pictures/<officeId>/<random id>.<ext>. The random id is the
+// capability (only that office's players are told it), and the page loads it
+// cross-origin as a WebGL texture, hence CORS.
+function servePicture(pathname, req, res) {
+  const m = /^\/pictures\/([a-z0-9-]{1,64})\/([^/]+)$/.exec(pathname);
+  const pic = m && (req.method === 'GET' || req.method === 'HEAD') && offices.get(m[1])?.pictureFile(m[2]);
+  if (!pic) {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    return res.end('Not found');
+  }
+  res.writeHead(200, {
+    'content-type': pic.type,
+    'access-control-allow-origin': '*',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
+    // Ids are never reused: a replaced picture gets a new URL.
+    'cache-control': 'public, max-age=31536000, immutable',
+  });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(pic.path).on('error', () => res.destroy()).pipe(res);
+}
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4 * 1024 * 1024 });
 

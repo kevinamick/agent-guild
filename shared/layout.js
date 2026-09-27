@@ -33,6 +33,20 @@ export const BOARDS = [
   { id: 'guild', label: 'Guild Hall', x: -19.7, z: 0, color: '#fde68a', side: true },
 ];
 
+// Empty spots on the ground-floor side walls where people can hang pictures.
+// `nx` is the wall's inward normal (+1 on the left wall, -1 on the right).
+// The rest of the wall space is spoken for (boards, the TV, the stairs).
+export const PICTURE_SPOTS = [
+  { id: 'l1', x: -19.85, y: 2.5, z: 5, nx: 1 },
+  { id: 'l2', x: -19.85, y: 2.5, z: 8.5, nx: 1 },
+  { id: 'l3', x: -19.85, y: 2.5, z: 12, nx: 1 },
+  { id: 'r1', x: 19.85, y: 2.5, z: -11.5, nx: -1 },
+  { id: 'r2', x: 19.85, y: 2.5, z: -8, nx: -1 },
+  { id: 'r3', x: 19.85, y: 2.5, z: -4.5, nx: -1 },
+];
+// The largest a picture gets; it keeps its aspect ratio inside this box.
+export const PICTURE_MAX = { w: 2.2, h: 1.6 };
+
 export function deskById(id) {
   return DESKS.find((d) => d.id === id);
 }
