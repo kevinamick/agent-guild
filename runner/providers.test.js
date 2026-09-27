@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectProvider, adoPrToItem, adoWorkItemToItem, htmlToText, PR_COMMANDS } from './providers.js';
+import {
+  detectProvider, adoPrToItem, adoWorkItemToItem, htmlToText, PR_COMMANDS, parsePrRef, prKey, prHeadFromCommand, ghCiStatus, ghPrStatus, adoCiStatus, adoPrStatus, isRevertOf,
+} from './providers.js';
 
 test('detects GitHub and every Azure DevOps remote form', () => {
   assert.deepEqual(detectProvider('git@github.com:kevinamick/explainimals.git'), { type: 'github', repo: 'kevinamick/explainimals', display: 'kevinamick/explainimals' });
@@ -148,4 +150,76 @@ test('ids are fetched 200 at a time', () => {
   const ids = Array.from({ length: 450 }, (_, i) => i);
   assert.deepEqual(chunk(ids, 200).map((c) => c.length), [200, 200, 50]);
   assert.deepEqual(chunk([], 200), []);
+});
+
+test('finds the PR a create command printed, on either host', () => {
+  const ado = { type: 'ado', org: 'contoso', project: 'Web App', repo: 'site' };
+  assert.deepEqual(parsePrRef('Creating pull request…\nhttps://github.com/kevinamick/agent-guild/pull/12\n'), {
+    host: 'github', repo: 'kevinamick/agent-guild', number: 12, url: 'https://github.com/kevinamick/agent-guild/pull/12',
+  });
+  assert.equal(parsePrRef('a pull request for branch "x" into branch "main" already exists:\nhttps://github.com/o/r/pull/3'), null);
+  assert.deepEqual(parsePrRef('https://dev.azure.com/contoso/Web%20App/_git/site/pullrequest/7'), {
+    host: 'ado', org: 'contoso', project: 'Web App', repo: 'site', number: 7, url: 'https://dev.azure.com/contoso/Web%20App/_git/site/pullrequest/7',
+  });
+  assert.equal(parsePrRef('https://contoso.visualstudio.com/Web%20App/_git/site/pullrequest/8').number, 8);
+  // `az repos pr create` prints JSON whose url is the API's, so the id and the runner's repo are used.
+  const az = '{ "pullRequestId": 9, "url": "https://dev.azure.com/contoso/0f1e/_apis/git/repositories/77/pullRequests/9" }';
+  assert.equal(parsePrRef(az, ado).url, 'https://dev.azure.com/contoso/Web%20App/_git/site/pullrequest/9');
+  assert.equal(parsePrRef(az, null), null);
+  assert.equal(parsePrRef('nothing here'), null);
+  assert.equal(prKey(parsePrRef(az, ado)), 'ado:contoso/web%20app/site#9');
+  assert.equal(prKey(parsePrRef('https://github.com/Kevin/Repo/pull/4')), 'github:kevin/repo#4');
+});
+
+test('reads the head branch a create command names', () => {
+  assert.equal(prHeadFromCommand('gh pr create --fill --head fix-login'), 'fix-login');
+  assert.equal(prHeadFromCommand('git commit -s -m x && gh pr create -H "feat/a" --fill'), 'feat/a');
+  assert.equal(prHeadFromCommand('az repos pr create --source-branch refs/heads/feat/b --title t'), 'feat/b');
+  assert.equal(prHeadFromCommand('gh pr create --fill && git push -s origin'), null);
+  assert.equal(prHeadFromCommand('git status'), null);
+});
+
+test('rolls CI checks up into one verdict', () => {
+  const run = (status, conclusion) => ({ __typename: 'CheckRun', status, conclusion });
+  const ctx = (state) => ({ __typename: 'StatusContext', state });
+  assert.equal(ghCiStatus([]), 'none');
+  assert.equal(ghCiStatus(null), 'none');
+  assert.equal(ghCiStatus([run('COMPLETED', 'SUCCESS'), run('COMPLETED', 'SKIPPED'), ctx('SUCCESS')]), 'passed');
+  assert.equal(ghCiStatus([run('COMPLETED', 'SUCCESS'), run('IN_PROGRESS', '')]), 'pending');
+  assert.equal(ghCiStatus([run('COMPLETED', 'SUCCESS'), ctx('PENDING')]), 'pending');
+  assert.equal(ghCiStatus([run('COMPLETED', 'FAILURE'), run('QUEUED', '')]), 'failed');
+  assert.equal(ghCiStatus([ctx('ERROR')]), 'failed');
+  const st = ghPrStatus({ state: 'MERGED', title: 't', baseRefName: 'main', mergedAt: '2026-01-01T00:00:00Z', mergeCommit: { oid: 'abc' }, statusCheckRollup: [run('COMPLETED', 'SUCCESS')] });
+  assert.deepEqual(st, { state: 'MERGED', ci: 'passed', title: 't', base: 'main', mergedAt: '2026-01-01T00:00:00Z', mergeCommit: 'abc' });
+
+  const build = (status) => ({ status, configuration: { type: { id: '0609b952-1397-4640-95ec-e00a01b2c241', displayName: 'Build' } } });
+  const reviewers = { status: 'rejected', configuration: { type: { id: 'x', displayName: 'Minimum number of reviewers' } } };
+  const status = (id, name, state) => ({ id, state, context: { genre: 'ci', name } });
+  assert.equal(adoCiStatus([], []), 'none');
+  assert.equal(adoCiStatus([build('approved'), reviewers]), 'passed');
+  assert.equal(adoCiStatus([build('running')]), 'pending');
+  assert.equal(adoCiStatus([build('rejected')]), 'failed');
+  // Only the newest status per check counts.
+  assert.equal(adoCiStatus([], [status(1, 'lint', 'failed'), status(2, 'lint', 'succeeded')]), 'passed');
+  assert.equal(adoCiStatus([build('approved')], [status(1, 'lint', 'succeeded'), status(2, 'e2e', 'error')]), 'failed');
+  const pr = adoPrStatus({ status: 'completed', title: 't', targetRefName: 'refs/heads/main', closedDate: '2026-01-02T00:00:00Z', lastMergeCommit: { commitId: 'def' } }, [build('approved')], []);
+  assert.deepEqual(pr, { state: 'MERGED', ci: 'passed', title: 't', base: 'main', mergedAt: '2026-01-02T00:00:00Z', mergeCommit: 'def' });
+  assert.equal(adoPrStatus({ status: 'abandoned' }, [], []).state, 'CLOSED');
+  assert.equal(adoPrStatus({ status: 'active' }, [], []).mergedAt, null);
+});
+
+test('recognises a revert of the PR, and only of this PR', () => {
+  const pr = { title: 'Fix login redirect', mergeCommit: '3f2a9c1d0e5b7a6c', repo: 'o/r', number: 12 };
+  assert.ok(isRevertOf('Revert "Fix login redirect"\n\nThis reverts commit 3f2a9c1d0e5b7a6c, reversing\nchanges made to 111.', pr));
+  assert.ok(isRevertOf('Undo the redirect\n\nThis reverts commit 3f2a9c1.', pr));
+  assert.ok(isRevertOf('Revert "Fix login redirect" (#15)\n\nReverts o/r#12', pr));
+  assert.ok(isRevertOf('Revert "Fix login redirect"', { ...pr, mergeCommit: null }));
+  assert.ok(isRevertOf('Merged PR 15: Revert "Merged PR 12: Fix login redirect"', pr));
+  assert.ok(isRevertOf('Some title\n\nReverts o/r#12', pr));
+  assert.ok(!isRevertOf('Reverts o/r#123', pr));
+  assert.ok(!isRevertOf('Revert "Revert "Fix login redirect""\n\nThis reverts commit 9999999.', pr));
+  assert.ok(!isRevertOf('Revert "Fix logout"', pr));
+  assert.ok(!isRevertOf('Fix login redirect again', pr));
+  assert.ok(!isRevertOf('This reverts commit 3f2a9c2.', pr));
+  assert.ok(!isRevertOf('', { title: '', mergeCommit: null }));
 });

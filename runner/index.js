@@ -12,11 +12,12 @@ import { promisify } from 'node:util';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import WebSocket from 'ws';
-import { emptyXp } from '../shared/progression.js';
+import { emptyXp, OUTCOMES } from '../shared/progression.js';
 import { lessonCounts, readPlaybooks, systemPrompt, trimPlaybooks, playbookDir, lessonNote } from './playbook.js';
 import { ADAPTERS, customAdapter, explainMissing, parseCliList, resolveBin, spawnSpec, normalizeHook } from './adapters.js';
 import { latestVersion, newer, npxCacheDir, npxCommand, retireDir, sweepRetired } from './update.js';
-import { detectProvider, loadBoard, PR_COMMANDS } from './providers.js';
+import { detectProvider, loadBoard, PR_COMMANDS, prHost, prHeadFromCommand, prKey } from './providers.js';
+import { POLL, readTracked, writeTracked, newTracked, observe, failed, unacked, pruneTracked, outcomeMessage, prFromHook } from './outcomes.js';
 import { detectKind, kindFromPrompt, isEditTool } from '../shared/worktype.js';
 
 const run = promisify(execFile);
@@ -322,7 +323,10 @@ function onHook(agentId, event, body) {
         status('waiting', 'has a question for you');
         break;
       }
-      if (PR_COMMANDS.opened.test(cmd)) s.turn.prOpened = true;
+      if (PR_COMMANDS.opened.test(cmd)) {
+        s.turn.prOpened = true;
+        s.turn.prHead = prHeadFromCommand(cmd) || s.turn.prHead;
+      }
       if (PR_COMMANDS.merged.test(cmd)) s.turn.prMerged = true;
       if (PR_COMMANDS.reviewed.test(cmd)) s.turn.reviewed = true;
       status('working', describeTool(body.tool_name, body.tool_input));
@@ -332,9 +336,13 @@ function onHook(agentId, event, body) {
       status('waiting', body.message || 'needs your input');
       break;
     // A tool finished, so any permission prompt was answered: lower the hand.
-    case 'PostToolUse':
+    case 'PostToolUse': {
+      // A PR the agent just opened, named in the create command's output.
+      const pr = s.turn && PR_COMMANDS.opened.test(String(body.tool_input?.command || '')) && prFromHook(body, provider);
+      if (pr && !s.turn.prs.some((p) => prKey(p) === prKey(pr))) s.turn.prs.push(pr);
       if (s.status === 'waiting' && s.turn) status('working', s.lastActivity || 'working');
       break;
+    }
     case 'Stop': {
       const turn = s.turn;
       s.turn = null;
@@ -342,9 +350,10 @@ function onHook(agentId, event, body) {
         // XP goes to the kind of work this turn turned out to be.
         const kind = detectKind(turn) || s.meta?.kind || 'general';
         s.meta = { ...s.meta, kind };
-        const { prompt, commands, edits, start, ...stats } = turn;
+        const { prompt, commands, edits, start, prs, prHead, ...stats } = turn;
         status('done', s.lastActivity || 'done', { kind });
         send({ t: 'turn', agentId, stats: { ...stats, kind, durationMs: Date.now() - start } });
+        if (turn.prOpened || prs.length) followPrs(agentId, s, turn, kind).catch((e) => log('PR lookup failed', e.message));
       } else status('done', s.lastActivity || 'done');
       try {
         trimPlaybooks(agentDir(agentId), localAgent(agentId).xp);
@@ -364,7 +373,7 @@ function hookReply(agentId, event) {
 }
 
 function newTurn(prompt) {
-  return { start: Date.now(), toolCalls: 0, prOpened: false, prMerged: false, reviewed: false, prompt, commands: [], edits: 0 };
+  return { start: Date.now(), toolCalls: 0, prOpened: false, prMerged: false, reviewed: false, prompt, commands: [], edits: 0, prs: [], prHead: null };
 }
 
 const hookServer = http.createServer((req, res) => {
@@ -487,6 +496,114 @@ function promptAgent(agentId, text) {
   setTimeout(() => s.term.write('\r'), 120);
 }
 
+// ---------------------------------------------------------------- PR outcomes
+// The PRs each agent opened are followed until CI passes, they merge, and for two
+// weeks after in case they're reverted. The office pays for each outcome once.
+
+const prs = prHost();
+const tracked = new Map(); // agentId -> its prs.json, for the current office
+let officeOutcomes = false; // the office pays for outcomes (older servers don't)
+let pollingPrs = false;
+const REPORT_AGAIN_MS = Math.max(60000, POLL.base); // re-send what the office hasn't acknowledged
+
+function trackedFor(agentId) {
+  if (!tracked.has(agentId)) tracked.set(agentId, readTracked(agentDir(agentId)));
+  return tracked.get(agentId);
+}
+
+async function currentBranch(cwd) {
+  try {
+    const { stdout } = await run('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = stdout.trim();
+    return branch && branch !== 'HEAD' ? branch : null;
+  } catch {
+    return null;
+  }
+}
+
+// After a turn that opened a PR: the one its output named, or else the PR whose
+// head is the branch the command named or the session is on.
+async function followPrs(agentId, s, turn, skill) {
+  let refs = turn.prs;
+  if (!refs.length) {
+    const branch = turn.prHead || (await currentBranch(s.cwd));
+    const ref = branch && (await prs.findByBranch(provider, branch));
+    refs = ref ? [ref] : [];
+  }
+  const list = trackedFor(agentId);
+  const added = refs.filter((ref) => !list.some((r) => r.key === prKey(ref)));
+  if (!added.length) return;
+  list.push(...added.map((ref) => newTracked(ref, skill)));
+  writeTracked(agentDir(agentId), list);
+  log(`following ${added.map((r) => `PR #${r.number}`).join(', ')} for ${localAgent(agentId).name} (${skill})`);
+}
+
+async function pollPrs() {
+  if (pollingPrs || !AGENTS_DIR) return;
+  pollingPrs = true;
+  try {
+    for (const agentId of fs.readdirSync(AGENTS_DIR)) {
+      const list = trackedFor(agentId);
+      let changed = false;
+      for (const rec of list.filter((r) => !r.done && r.nextPollAt <= Date.now())) {
+        changed = true;
+        try {
+          const status = await prs.status(rec.ref);
+          const commits = status.state === 'MERGED' && !rec.seen.reverted && status.base ? await prs.commitsSince(rec.ref, status.base, status.mergedAt || new Date(rec.openedAt).toISOString()) : [];
+          const fresh = observe(rec, status, commits);
+          if (fresh.length) rec.reportedAt = 0;
+          for (const event of fresh) log(`PR #${rec.number}: ${{ ci: 'CI passed', merged: 'merged', reverted: 'reverted' }[event]}`);
+          rec.error = null;
+        } catch (e) {
+          const why = String(e.stderr || e.message || e).trim().split('\n')[0];
+          if (why !== rec.error) log(`couldn't check PR #${rec.number}: ${why}`);
+          rec.error = why;
+          failed(rec);
+        }
+      }
+      const kept = pruneTracked(list);
+      if (kept.length !== list.length) tracked.set(agentId, kept);
+      if (changed || kept.length !== list.length) writeTracked(agentDir(agentId), kept);
+      reportOutcomes(agentId);
+    }
+  } catch (e) {
+    log('PR polling failed', e.message);
+  } finally {
+    pollingPrs = false;
+  }
+}
+
+// Sends outcomes the office hasn't acknowledged yet (it acks duplicates too).
+function reportOutcomes(agentId, now = Date.now()) {
+  if (!officeOutcomes || !ws?.ready) return;
+  for (const rec of trackedFor(agentId)) {
+    const due = unacked(rec);
+    if (!due.length || now - (rec.reportedAt || 0) < REPORT_AGAIN_MS) continue;
+    rec.reportedAt = now;
+    for (const event of due) send(outcomeMessage(agentId, rec, event));
+  }
+}
+
+// On (re)connecting everything unacknowledged goes out at once, whenever it was last sent.
+function reportAllOutcomes() {
+  if (!AGENTS_DIR) return;
+  for (const agentId of fs.readdirSync(AGENTS_DIR)) {
+    for (const rec of trackedFor(agentId)) rec.reportedAt = 0;
+    reportOutcomes(agentId);
+  }
+}
+
+function onOutcomeAck(msg) {
+  if (!AGENTS_DIR || !OUTCOMES.includes(msg.event) || !fs.existsSync(agentDir(String(msg.agentId)))) return;
+  const list = trackedFor(msg.agentId);
+  const rec = list.find((r) => r.key === msg.key);
+  if (!rec || rec.acked[msg.event]) return;
+  rec.acked[msg.event] = Date.now();
+  writeTracked(agentDir(msg.agentId), list);
+}
+
+setInterval(pollPrs, Math.min(60000, POLL.base)).unref();
+
 // ---------------------------------------------------------------- office link
 
 function send(msg) {
@@ -533,7 +650,11 @@ async function onMessage(msg) {
       }
       ws.ready = true;
       while (outbox.length) send(outbox.shift());
+      officeOutcomes = msg.outcomes === true;
+      reportAllOutcomes();
       return;
+    case 'outcome-ack':
+      return onOutcomeAck(msg);
     case 'profile':
       return saveLocalAgent(msg.agent);
     case 'playbook':
@@ -555,6 +676,7 @@ function useOffice(id, name) {
   }
   officeId = id;
   AGENTS_DIR = path.join(HOME, 'offices', id, 'agents');
+  tracked.clear();
   // Before offices existed, agents lived in ~/.agent-guild/agents. They belonged to
   // the only office there was, so the first office this runner joins adopts them.
   const legacy = path.join(HOME, 'agents');
@@ -581,7 +703,7 @@ function sendHello(repo) {
     cols: s.cols, rows: s.rows,
   }));
   const engines = Object.entries(ENGINES).map(([id, a]) => ({ id, label: a.label }));
-  ws.send(JSON.stringify({ t: 'hello', repo, provider: provider?.type || null, lend: !opts.private, engines, pty: ptyInfo(), agents: loadLocalAgents(), sessions: live }));
+  ws.send(JSON.stringify({ t: 'hello', repo, provider: provider?.type || null, lend: !opts.private, outcomes: true, engines, pty: ptyInfo(), agents: loadLocalAgents(), sessions: live }));
 }
 
 async function connect(repo, attempt = 0) {

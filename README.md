@@ -35,6 +35,7 @@ The runner reads the repo's `origin` remote and talks to whichever host it finds
 | sign-in | `gh auth login` | `AZURE_DEVOPS_EXT_PAT` (a PAT with Code and Work Items read), or `az login`. Public projects' PRs load without either |
 | agent briefs | `gh issue view`, `gh pr diff`, `gh pr create` | `az boards work-item show`, `az repos pr show`, `az repos pr create --work-items` |
 | PR bonus XP | `gh pr create/merge/review` | `az repos pr create`, `az repos pr update --status completed`, `az repos pr set-vote` |
+| PR outcome XP | `gh pr view --json statusCheckRollup,state,mergeCommit`, `gh api …/commits` | PR status, build policy evaluations and status checks, commits (REST) |
 
 The work-items board has an **Area** filter listing the project's area paths (each person's choice is remembered per office). It filters in the Azure DevOps query itself (`[System.AreaPath] UNDER '…'`), so quiet areas aren't hidden by the 60-item limit, and only paths from the project's own area tree are accepted.
 
@@ -54,6 +55,8 @@ For agents to open and review ADO pull requests themselves, install the Azure CL
 - `shared/`: progression rules (XP curve, titles, playbook capacity) and the office layout, used by all three parts.
 
 XP for one task (a prompt through to Claude's `Stop`): +10 for the task, +2 per tool call (max 40), +3 per minute of focus (max 30), +50 for opening a PR, +30 for posting a review, +80 for merging. The total is capped at 200. A chat with no tool use earns 2. Kudos from a coworker earn +20, once per person per task.
+
+Outcomes pay too. The runner follows each PR an agent opens (the URL in `gh pr create`'s output, or else the PR whose head is the session's branch), polling every 2 minutes and backing off to every 30: CI passing earns +20, the merge +60, and a revert of the merge on the base branch within 14 days takes the 60 back (never below zero). Each is paid once per PR, to the skill of the turn that opened it. The runner keeps its tracked PRs in `prs.json` next to each agent's `agent.json`; the office keeps a ledger per agent and acknowledges each report, so restarts on either side never pay twice.
 
 ## Join an existing office (coworkers)
 

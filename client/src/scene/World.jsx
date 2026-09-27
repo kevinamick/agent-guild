@@ -346,7 +346,7 @@ function Effects() {
         {f.kind === 'levelup' && <LevelRing position={[0, 0.1, 0]} color={color} />}
         <Html position={[0, 2.9, 0]} center zIndexRange={[30, 0]} style={{ pointerEvents: 'none' }}>
           {f.kind === 'xp' ? (
-            <div className="fx-xp" style={{ color }}>+{f.amount} XP</div>
+            <div className="fx-xp" style={{ color }}>{f.amount < 0 ? `−${-f.amount}` : `+${f.amount}`} XP</div>
           ) : (
             <div className="fx-levelup">
               <div className="fx-levelup-title">LEVEL UP!</div>

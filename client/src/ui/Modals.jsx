@@ -9,7 +9,7 @@ import { AreaPicker } from './AreaPicker.jsx';
 import { kindFromPrompt } from '../../../shared/worktype.js';
 import { noteColor } from './noteColors.js';
 import {
-  SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
+  SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP, OUTCOME_XP,
 } from '../../../shared/progression.js';
 
 export function Modal({ title, children, onClose = closeModal, wide, className = '' }) {
@@ -562,6 +562,7 @@ export function AgentModal({ agentId }) {
         <div className="stats-row">
           {[
             ['Tasks', agent.stats.tasks], ['PRs opened', agent.stats.prsOpened], ['PRs merged', agent.stats.prsMerged],
+            ['CI passed', agent.stats.ciPassed || 0], ['Reverted', agent.stats.prsReverted || 0],
             ['Reviews', agent.stats.reviews], ['Kudos', agent.stats.kudos], ['Times borrowed', agent.stats.borrowed],
           ].map(([k, v]) => (
             <div key={k} className="stat"><b>{v}</b><span>{k}</span></div>
@@ -619,6 +620,7 @@ export function HelpModal() {
         </div>
         <h4>Leveling</h4>
         <p>Agents earn XP in the skill a task belongs to: 📌 Issue Fixer, 🔍 Reviewer, 🔀 Conflict Resolver or 🧰 Generalist. A finished task pays for tool calls and focus time, with bonuses for opening, reviewing and merging PRs. For example, a 4-minute fix with 12 tool calls that opens a PR earns <b>{sample.amount} XP</b>.</p>
+        <p><b>Outcomes count too.</b> The runner follows each PR an agent opens: when its CI passes the agent earns +{OUTCOME_XP.ci} XP, when it's merged +{OUTCOME_XP.merged}, and if the merge is reverted within two weeks the merge bonus is taken back (−{-OUTCOME_XP.reverted}). Each is paid once per PR, to the skill of the work that opened it.</p>
         <p><b>Levels make agents stronger.</b> After each task, an agent writes what it learned into its per-skill <i>playbook</i>, and that playbook is injected into every session it starts. Higher skill levels let it keep more lessons, so a Lv 8 Reviewer brings 19 learned lessons about your repo to a review, while a new recruit brings none. Levels also unlock hats, an aura and a crown.</p>
         <h4>Engines</h4>
         <p>An agent can run on <b>Claude Code</b> or <b>GitHub Copilot CLI</b>, whichever its owner's runner has installed. You pick the engine when hiring. The agent's level, XP and playbook stay the same on either engine, because the lessons are about your repo, not about the tool.</p>

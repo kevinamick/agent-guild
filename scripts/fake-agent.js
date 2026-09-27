@@ -30,7 +30,9 @@ async function work(text) {
   } catch {}
   out(`\r\n\x1b[2m${NAME} is thinking…\x1b[0m\r\n`);
   const steps = [['Bash', { command: 'git status' }], ['Read', { file_path: 'README.md' }], ['Edit', { file_path: 'src/app.js' }]];
-  if (/open a pr/i.test(text)) steps.push(['Bash', { command: 'gh pr create --fill' }]);
+  // A PR URL in the prompt plays the part of gh's output, reported in the finished-tool hook.
+  const prUrl = text.match(/https:\/\/\S+\/pull(request)?\/\d+/)?.[0];
+  if (/open a pr/i.test(text)) steps.push(['Bash', { command: 'gh pr create --fill' }, prUrl && { stdout: `${prUrl}\n`, stderr: '' }]);
   if (/review/i.test(text)) steps.push(['Bash', { command: 'gh pr review 2 --comment -b "lgtm"' }]);
   if (/merge|conflict|rebase/i.test(text)) steps.push(['Bash', { command: 'git merge origin/main' }]);
   if (/needs? permission/i.test(text)) {
@@ -44,10 +46,11 @@ async function work(text) {
     await hook('PostToolUse', { tool_name: 'bash', tool_input: { command: 'rm -rf build' }, timestamp: Date.now() });
     await sleep(1500);
   }
-  for (const [tool_name, tool_input] of steps) {
+  for (const [tool_name, tool_input, tool_response] of steps) {
     await hook('PreToolUse', { tool_name, tool_input });
     out(`\x1b[32m●\x1b[0m ${tool_name}(${tool_input.command || tool_input.file_path})\r\n`);
     await sleep(400);
+    if (tool_response) await hook('PostToolUse', { tool_name, tool_input, tool_response });
   }
   const kind = /review/i.test(text) ? 'review' : /issue/i.test(text) ? 'issue' : 'general';
   const file = noted || (PLAYBOOK && path.join(PLAYBOOK, `${kind}.md`));
