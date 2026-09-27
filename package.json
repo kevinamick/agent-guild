@@ -14,7 +14,7 @@
     "build": "vite build --config client/vite.config.js",
     "server": "node server/index.js",
     "runner": "node runner/index.js",
-    "test": "node --test shared/*.test.js runner/*.test.js server/*.test.js client/src/audio/*.test.js",
+    "test": "node --test shared/*.test.js runner/*.test.js server/*.test.js client/src/audio/*.test.js client/src/scene/*.test.js",
     "smoke": "node scripts/smoke.js"
   },
   "engines": {
