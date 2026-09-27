@@ -106,3 +106,31 @@ test('work items carry their area path', () => {
   const wi = adoWorkItemToItem({ id: 1, fields: { 'System.Title': 't', 'System.State': 'Active', 'System.AreaPath': 'Web\\Checkout' } }, { org: 'o', project: 'p', repo: 'r' });
   assert.equal(wi.areaPath, 'Web\\Checkout');
 });
+
+import { curlConfig, httpRequest, netReason } from './providers.js';
+
+test('curl config quotes everything and keeps secrets off the command line', () => {
+  const cfg = curlConfig('https://dev.azure.com/o/p/_apis/wit/wiql', {
+    method: 'POST',
+    headers: { authorization: 'Bearer abc"def', 'content-type': 'application/json' },
+    body: JSON.stringify({ query: "x UNDER 'A\\B'" }),
+  });
+  assert.match(cfg, /^url = "https:\/\/dev\.azure\.com\/o\/p\/_apis\/wit\/wiql"$/m);
+  assert.match(cfg, /^request = "POST"$/m);
+  assert.match(cfg, /^header = "authorization: Bearer abc\\"def"$/m);
+  assert.match(cfg, /^data-binary = "\{\\"query\\":\\"x UNDER 'A\\\\\\\\B'\\"\}"$/m);
+  assert.ok(!cfg.includes('\r'));
+});
+
+test('a fetch that cannot connect falls back to curl, and explains when both fail', async () => {
+  const broken = async () => {
+    throw new TypeError('fetch failed', { cause: { code: 'SELF_SIGNED_CERT_IN_CHAIN' } });
+  };
+  const ok = await httpRequest('https://dev.azure.com/x', {}, { fetchImpl: broken, curl: async () => ({ status: 200, type: 'application/json', text: '{"a":1}' }) });
+  assert.deepEqual(ok, { status: 200, type: 'application/json', text: '{"a":1}' });
+  await assert.rejects(
+    httpRequest('https://dev.azure.com/x', {}, { fetchImpl: broken, curl: async () => { throw new Error('curl: (60) SSL certificate problem'); } }),
+    /Couldn't reach dev\.azure\.com \(SELF_SIGNED_CERT_IN_CHAIN\); curl couldn't either \(curl: \(60\) SSL certificate problem\)\. Behind a proxy\?/,
+  );
+  assert.equal(netReason(new TypeError('fetch failed')), 'fetch failed');
+});

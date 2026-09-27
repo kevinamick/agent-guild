@@ -1,7 +1,7 @@
 // Where the team's code lives. The runner reads the boards from the repo's host
 // and hands the office one normalized shape (GitHub's field names), so the UI
 // doesn't care whether items came from GitHub or Azure DevOps.
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveBin, spawnSpec } from './adapters.js';
 
@@ -92,17 +92,68 @@ export function signInMessage(via, org, azProblem) {
   return `Azure DevOps needs sign-in for "${org}": run \`az login\` on the runner's machine, or set AZURE_DEVOPS_EXT_PAT (a PAT with Code and Work Items read) and restart the runner.${azProblem ? ` (${azProblem})` : ''}`;
 }
 
+// ---------------------------------------------------------------- HTTP with a curl fallback
+// Node's fetch ignores HTTPS_PROXY and the OS certificate store, which corporate
+// networks (proxies, TLS inspection) often need, and then only says "fetch failed".
+// curl (built into Windows 10+, where it uses the Windows certificate store) honours
+// both, so a request that can't connect is retried through it. Everything, headers
+// included, goes to curl on stdin (-K -) so tokens never appear on a command line.
+
+export function curlConfig(url, { method = 'GET', headers = {}, body } = {}) {
+  const q = (v) => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`;
+  const lines = [`url = ${q(url)}`, `request = ${q(method)}`, 'silent', 'show-error', 'max-time = 30', 'write-out = "\\n%{http_code} %{content_type}"'];
+  for (const [k, v] of Object.entries(headers)) lines.push(`header = ${q(`${k}: ${v}`)}`);
+  if (body != null) lines.push(`data-binary = ${q(body)}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function runCurl(config) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(resolveBin('curl') || 'curl', ['-K', '-'], { windowsHide: true });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) return reject(new Error(err.trim().split('\n').pop() || `curl exited with ${code}`));
+      const cut = out.lastIndexOf('\n');
+      const [status, ...type] = out.slice(cut + 1).trim().split(' ');
+      resolve({ status: Number(status), type: type.join(' '), text: out.slice(0, cut) });
+    });
+    child.stdin.end(config);
+  });
+}
+
+// Why a fetch couldn't connect, as specifically as Node says (e.g. SELF_SIGNED_CERT_IN_CHAIN).
+export const netReason = (e) => e?.cause?.code || e?.cause?.message || e?.message || 'unknown error';
+
+export async function httpRequest(url, init = {}, { fetchImpl = fetch, curl = runCurl } = {}) {
+  try {
+    const res = await fetchImpl(url, { ...init, redirect: 'manual' });
+    return { status: res.status, type: res.headers.get('content-type') || '', text: await res.text() };
+  } catch (e) {
+    try {
+      return await curl(curlConfig(url, init));
+    } catch (curlErr) {
+      throw new Error(
+        `Couldn't reach ${new URL(url).host} (${netReason(e)}); curl couldn't either (${curlErr.message}). ` +
+          'Behind a proxy? Set HTTPS_PROXY. With TLS inspection, set NODE_EXTRA_CA_CERTS to your company root certificate. Then restart the runner.',
+      );
+    }
+  }
+}
+
 async function adoFetch(url, p, init = {}) {
   const auth = await adoAuth();
-  const res = await fetch(url, { ...init, headers: { accept: 'application/json', ...(init.headers || {}), ...auth.headers }, redirect: 'manual' });
-  const type = res.headers.get('content-type') || '';
+  const res = await httpRequest(url, { ...init, headers: { accept: 'application/json', ...(init.headers || {}), ...auth.headers } });
   // Unauthenticated requests get a redirect or a 203 sign-in page instead of JSON.
-  if (res.status === 401 || res.status === 403 || res.status === 203 || (res.status >= 300 && res.status < 400) || !type.includes('json')) {
+  if (res.status === 401 || res.status === 403 || res.status === 203 || (res.status >= 300 && res.status < 400) || !res.type.includes('json')) {
     if (auth.via === 'az') azToken.until = 0; // ask az again next time
     throw new Error(signInMessage(auth.via, p.org, azToken.problem));
   }
-  if (!res.ok) throw new Error(`Azure DevOps answered ${res.status}: ${(await res.text()).slice(0, 160)}`);
-  return res.json();
+  if (res.status >= 400) throw new Error(`Azure DevOps answered ${res.status}: ${res.text.slice(0, 160)}`);
+  return JSON.parse(res.text);
 }
 
 const base = (p) => `https://dev.azure.com/${encodeURIComponent(p.org)}/${encodeURIComponent(p.project)}`;
