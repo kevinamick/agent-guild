@@ -14,6 +14,7 @@ import { createPictureStore } from './pictures.js';
 import { sanitizeAvatar, randomAvatar } from '../shared/avatar.js';
 import { cleanAgentName, sameName } from '../shared/names.js';
 import { createScreen } from './screens.js';
+import { addTurnCost, cleanCost } from '../shared/cost.js';
 import {
   SKILLS, SKILL_INFO, KUDOS_XP, emptyXp, levelFor, overallLevel, titleFor, bestSkill, turnXp, totalXp,
 } from '../shared/progression.js';
@@ -142,6 +143,7 @@ function createOffice(officeId, officeName, dataDir) {
       skillLevels: Object.fromEntries(SKILLS.map((s) => [s, levelFor(p.xp[s] || 0)])),
       title: titleFor(level, totalXp(p.xp) > 0 ? best : null),
       stats: p.stats,
+      cost: p.cost || null,
       online: Boolean(runner),
       lendable: runner ? runner.lend : false,
       // Who else may use this agent ({ name: 'session' | 'always' }); the owner always can.
@@ -248,7 +250,7 @@ function createOffice(officeId, officeName, dataDir) {
 
   function runnerAgent(id) {
     const p = profiles.get(id);
-    return { id, name: p.name, color: p.color, owner: p.owner, xp: p.xp, stats: p.stats };
+    return { id, name: p.name, color: p.color, owner: p.owner, xp: p.xp, stats: p.stats, cost: p.cost };
   }
 
   // ---------------------------------------------------------------- agents
@@ -680,6 +682,7 @@ function createOffice(officeId, officeName, dataDir) {
         profiles.set(a.id, {
           id: a.id, name: a.name, owner: runner.owner, color: a.color, xp: { ...emptyXp(), ...a.xp },
           stats: { tasks: 0, borrowed: 0, kudos: 0, prsOpened: 0, prsMerged: 0, reviews: 0, ...a.stats }, createdAt: Date.now(),
+          ...(a.cost && { cost: cleanCost(a.cost) }),
         });
       } else {
         for (const s of SKILLS) existing.xp[s] = Math.max(existing.xp[s] || 0, a.xp?.[s] || 0);
@@ -822,6 +825,11 @@ function createOffice(officeId, officeName, dataDir) {
         // Runners from 0.4.1 detect the kind per turn; older ones leave it to the desk.
         const kind = SKILLS.includes(stats.kind) ? stats.kind : l.task?.kind || 'general';
         if (l.task) l.task.kind = kind;
+        // Newer runners say what the turn cost; older ones send none, and that's fine.
+        if (stats.cost) {
+          p.cost = addTurnCost(p.cost, kind, stats.cost, (stats.toolCalls || 0) > 0);
+          saveProfiles();
+        }
         const from = l.task?.borrowed ? l.task.requestedBy : null;
         grantXp(msg.agentId, kind, amount, reasons, from);
         break;

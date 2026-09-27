@@ -1,21 +1,30 @@
 #!/usr/bin/env node
 // A stand-in for `claude` when testing the office without spending tokens:
 // `agent-guild-runner --agent-cmd scripts/fake-agent.js`. It fires the same hook
-// events Claude Code would and writes a playbook lesson after each task.
+// events Claude Code would and writes a playbook lesson after each task. Like
+// Claude Code it keeps a transcript whose token counts give each turn's cost.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const HOOK = process.env.AGENT_GUILD_HOOK_URL;
 const NAME = process.env.AGENT_GUILD_AGENT || 'agent';
 const PLAYBOOK = process.env.AGENT_GUILD_PLAYBOOK_DIR;
+const SESSION = `fake-${process.pid}-${Date.now()}`;
+const TRANSCRIPT = path.join(PLAYBOOK ? path.dirname(PLAYBOOK) : os.tmpdir(), `${SESSION}.jsonl`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const hook = (event, body = {}) =>
-  fetch(`${HOOK}/${event}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  fetch(`${HOOK}/${event}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session_id: SESSION, transcript_path: TRANSCRIPT, ...body }),
+  })
     .then((r) => r.text())
     .catch(() => '');
 
 let line = '';
 let busy = false;
+let calls = 0;
 const out = (s) => process.stdout.write(s);
 const prompt = () => out('\r\n\x1b[33m❯\x1b[0m ');
 
@@ -55,6 +64,11 @@ async function work(text) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.appendFileSync(file, `- Lesson from "${text.slice(0, 40)}": run the tests before pushing\n`);
   }
+  // One model call per task: 1000 in, 2000 out, 10000 from cache = $0.024 at Sonnet 5 prices.
+  const usage = { input_tokens: 1000, output_tokens: 2000, cache_read_input_tokens: 10000, cache_creation_input_tokens: 0 };
+  const message = { id: `msg_${SESSION}_${++calls}`, role: 'assistant', model: 'claude-sonnet-5', usage, content: [{ type: 'text', text: 'Done.' }] };
+  fs.mkdirSync(path.dirname(TRANSCRIPT), { recursive: true });
+  fs.appendFileSync(TRANSCRIPT, JSON.stringify({ type: 'assistant', sessionId: SESSION, message }) + '\n');
   out(`\x1b[1mDone:\x1b[0m ${text.slice(0, 60)}\r\n`);
   await hook('Stop', {});
   busy = false;

@@ -233,6 +233,11 @@ kbd {
 .invite-box { margin-top: 10px; border: 2px dashed var(--line); border-radius: 10px; padding: 10px; background: #fff; }
 .input.mono { font-family: 'JetBrains Mono', monospace; }
 code { font-family: 'JetBrains Mono', monospace; font-size: 0.92em; }
+.cost-chip { font-size: 11px; font-weight: 700; color: var(--muted); border: 1.5px dashed #cbbd9f; border-radius: 99px; padding: 0 7px; white-space: nowrap; cursor: help; }
+.cost-text { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; cursor: help; text-decoration: underline dotted; }
+.spend-row { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; font-size: 13px; border: 2px dashed var(--line); border-radius: 10px; padding: 6px 10px; cursor: help; }
+.spend-label { font-weight: 800; }
+.spend-skill { font-size: 12px; color: var(--muted); font-weight: 700; white-space: nowrap; }
 .engine-chip { font-size: 10px; font-weight: 900; padding: 1px 6px; border-radius: 6px; border: 1.5px solid var(--line); white-space: nowrap; color: var(--ink); }
 .character-modal { width: min(900px, 100%); }
 .character-body { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 16px; padding: 14px; overflow: auto; min-height: 0; }

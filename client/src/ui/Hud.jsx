@@ -9,6 +9,7 @@ import { SoundButton } from './Sound.jsx';
 import { VoiceButton, VoicePanel, VoiceBadge } from './Voice.jsx';
 import { TvPrompt } from './TvPrompt.jsx';
 import { ViewToggle } from './ViewToggle.jsx';
+import { costPerTask, formatPerTask, COST_NOTE } from '../../../shared/cost.js';
 
 export function XpBar({ xp, color = '#a855f7', thin }) {
   const p = progress(xp);
@@ -28,6 +29,19 @@ export function EngineChip({ engine }) {
   if (!engine) return null;
   const e = ENGINE_STYLE[engine] || { short: engine, bg: '#e2e8f0' };
   return <span className="engine-chip" style={{ background: e.bg }}>{e.short}</span>;
+}
+
+// What one task of this kind costs with this agent, e.g. "≈$0.40/review". Nothing
+// until it has done one with a known cost.
+export function CostChip({ agent, skill, plain }) {
+  const per = costPerTask(agent.cost, skill);
+  if (!per.length) return null;
+  const tasks = per.map((p) => `${formatPerTask(p, skill)} over ${p.tasks} task${p.tasks === 1 ? '' : 's'}`).join('; ');
+  return (
+    <span className={plain ? 'cost-text' : 'cost-chip'} title={`${tasks}. ${COST_NOTE}`}>
+      {per.map((p) => formatPerTask(p, skill, true)).join(' · ')}
+    </span>
+  );
 }
 
 export function LevelBadge({ level }) {

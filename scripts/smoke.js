@@ -111,6 +111,10 @@ async function main() {
   check(xp1.skill === 'issue' && xp1.amount >= 60, `new recruit earned ${xp1.amount} issue XP`);
   await kevin.wait((m) => m.t === 'state' && agentIn(m, agentId)?.lessons?.issue >= 1, 'lesson recorded');
   check(true, 'playbook lesson counted');
+  // The fake agent's transcript says the task took 1000 + 2000 + 10000 cached tokens of Sonnet 5.
+  const costed = await kevin.wait((m) => m.t === 'state' && agentIn(m, agentId)?.cost?.skills?.issue?.usd?.tasks === 1, 'turn cost');
+  const cost1 = agentIn(costed, agentId).cost;
+  check(Math.abs(cost1.total.usd - 0.024) < 1e-9 && Math.abs(cost1.skills.issue.usd.amount - 0.024) < 1e-9, `the task's cost reached the agent card ($${cost1.total.usd}, estimated from the transcript)`);
 
   // --- laptop screens: the office gets each seated agent's live terminal (changed rows only)
   const screenText = (msgs) => msgs.filter((m) => m.t === 'screen' && m.agentId === agentId && m.rows).flatMap((m) => Object.values(m.rows)).flat().map((r) => r[0]).join('');
@@ -161,6 +165,8 @@ async function main() {
   alice.send({ t: 'hire', deskId: 7, agentId, task: { text: 'review pr 2', kind: 'review' }, worktree: false });
   const xp2 = await alice.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'review', 'review xp', 20000);
   check(xp2.from === 'Alice', `Alice borrowed Kevin's agent; it earned ${xp2.amount} review XP`);
+  const reviewCost = await alice.wait((m) => m.t === 'state' && agentIn(m, agentId)?.cost?.skills?.review?.usd?.tasks === 1, 'review cost');
+  check(Math.abs(agentIn(reviewCost, agentId).cost.total.usd - 0.048) < 1e-9, 'the review is costed separately, and the total adds up');
 
   // --- naming agents: owner (or admin) only, tidied, unique per office, synced to the runner
   alice.send({ t: 'rename', agentId, name: 'Hacked' });
@@ -321,6 +327,7 @@ async function main() {
   const restored = agentIn(kevin2, agentId);
   check(restored.task?.requestedBy === 'Alice' && restored.task?.kind === 'review', 'its task (borrowed by Alice, review) was restored');
   check(restored.total >= xp1.amount + xp2.amount, `XP survived the restart (${restored.total})`);
+  check(restored.cost?.skills?.review?.usd?.tasks === 1 && restored.cost.total.usd >= 0.048 - 1e-9, 'what it has cost survived the restart');
   kevin2.send({ t: 'sub', agentId });
   const sb = await kevin2.wait((m) => m.t === 'scrollback' && m.agentId === agentId, 'scrollback after restart');
   check(sb.data.includes('review pr 2'), 'terminal history was restored from the runner');

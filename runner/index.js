@@ -18,6 +18,7 @@ import { ADAPTERS, customAdapter, explainMissing, parseCliList, resolveBin, spaw
 import { latestVersion, newer, npxCacheDir, npxCommand, retireDir, sweepRetired } from './update.js';
 import { detectProvider, loadBoard, PR_COMMANDS } from './providers.js';
 import { detectKind, kindFromPrompt, isEditTool } from '../shared/worktype.js';
+import { createCostTracker, copilotTranscript } from './cost.js';
 
 const run = promisify(execFile);
 const VERSION = createRequire(import.meta.url)('../package.json').version;
@@ -282,6 +283,14 @@ function describeTool(name, input = {}) {
   return name;
 }
 
+// The CLI's transcript for this session: Claude sends it with every hook, Copilot
+// only at agentStop (its other hooks name the session).
+function transcriptOf(s, body) {
+  const file = body.transcript_path || body.transcriptPath;
+  if (file) return String(file);
+  return s.engine === 'copilot' ? copilotTranscript(body.sessionId || body.session_id) : null;
+}
+
 function onHook(agentId, event, body) {
   const s = sessions.get(agentId);
   if (!s) return;
@@ -300,9 +309,11 @@ function onHook(agentId, event, body) {
   };
   switch (event) {
     case 'SessionStart':
+      s.cost.mark(transcriptOf(s, body));
       if (!s.turn) status('ready', 'waiting for a prompt');
       break;
     case 'UserPromptSubmit': {
+      s.cost.mark(transcriptOf(s, body));
       const prompt = String(body.prompt || '');
       s.turn = newTurn(prompt);
       // What was asked decides the kind until the work itself says otherwise.
@@ -342,9 +353,15 @@ function onHook(agentId, event, body) {
         // XP goes to the kind of work this turn turned out to be.
         const kind = detectKind(turn) || s.meta?.kind || 'general';
         s.meta = { ...s.meta, kind };
-        const { prompt, commands, edits, start, ...stats } = turn;
+        const { prompt, commands, edits, start, ...rest } = turn;
         status('done', s.lastActivity || 'done', { kind });
-        send({ t: 'turn', agentId, stats: { ...stats, kind, durationMs: Date.now() - start } });
+        const stats = { ...rest, kind, durationMs: Date.now() - start };
+        // What the turn cost, from the transcript. Best effort: without it the turn still counts.
+        s.cost
+          .turn(transcriptOf(s, body))
+          .then((cost) => cost && (stats.cost = cost))
+          .catch(() => {})
+          .finally(() => send({ t: 'turn', agentId, stats }));
       } else status('done', s.lastActivity || 'done');
       try {
         trimPlaybooks(agentDir(agentId), localAgent(agentId).xp);
@@ -430,7 +447,7 @@ async function spawnAgent({ agent, task, worktree, cols, rows, deskId, meta, cli
   const s = {
     term, cwd, worktree: wt, turn: null, buf: '', timer: null, screen: '', trustAsked: false,
     scrollback: '', deskId, meta, engine, status: task ? 'starting' : 'ready', activity: '',
-    cols: cols || 120, rows: rows || 34,
+    cols: cols || 120, rows: rows || 34, cost: createCostTracker(),
   };
   sessions.set(agent.id, s);
   log(`▶ ${agent.name} (${adapter.label}) started in ${cwd}${task ? ` for ${task.requestedBy}: ${task.text.split('\n')[0].slice(0, 80)}` : ''}`);

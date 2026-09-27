@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useGame, send, openModal, closeModal, signOut, requestBoard, setBoardArea } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
-import { LevelBadge, XpBar, SkillChips, EngineChip } from './Hud.jsx';
+import { LevelBadge, XpBar, SkillChips, EngineChip, CostChip } from './Hud.jsx';
 import { useHost } from '../host.js';
 import { cleanAgentName, sameName, AGENT_NAME_MAX } from '../../../shared/names.js';
 import { canUseAgent, requestAccess, AgentAccess } from './Access.jsx';
 import { AreaPicker } from './AreaPicker.jsx';
 import { kindFromPrompt } from '../../../shared/worktype.js';
 import { noteColor } from './noteColors.js';
+import { costPerTask, formatPerTask, formatTotals, COST_NOTE } from '../../../shared/cost.js';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -276,6 +277,7 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
                     {SKILL_INFO[kind].icon} {SKILL_INFO[kind].short} {a.skillLevels[kind]}
                   </span>
                   <span className="muted small">📖 {lessons}/{playbookCapacity(a.skillLevels[kind])} lessons · {a.stats.tasks} tasks</span>
+                  <CostChip agent={a} skill={kind} plain />
                   <span className="grow" />
                   {i === 0 && a.skillLevels[kind] > 1 && <span className="rec">recommended</span>}
                   <span className={`owner ${mine(a) ? 'you' : ''}`}>
@@ -417,7 +419,7 @@ export function RosterModal() {
         </div>
         <table className="roster">
           <thead>
-            <tr><th>#</th><th>Agent</th><th>Owner</th><th>Level</th><th>Skills</th><th>Tasks</th><th>PRs</th><th>👏</th><th>Where</th></tr>
+            <tr><th>#</th><th>Agent</th><th>Owner</th><th>Level</th><th>Skills</th><th>Tasks</th><th title={COST_NOTE}>Spend ≈</th><th>PRs</th><th>👏</th><th>Where</th></tr>
           </thead>
           <tbody>
             {list.map((a, i) => (
@@ -434,6 +436,10 @@ export function RosterModal() {
                 </td>
                 <td><SkillChips agent={a} highlight={sort} /></td>
                 <td>{a.stats.tasks}</td>
+                <td title={COST_NOTE}>
+                  {formatTotals(a.cost) || <span className="muted">–</span>}
+                  {sort !== 'total' && <div><CostChip agent={a} skill={sort} /></div>}
+                </td>
                 <td>{a.stats.prsOpened}/{a.stats.prsMerged}</td>
                 <td>{a.stats.kudos}</td>
                 <td>
@@ -444,7 +450,7 @@ export function RosterModal() {
               </tr>
             ))}
             {!list.length && (
-              <tr><td colSpan={9} className="muted pad">No agents yet. Walk up to an empty desk and press E to recruit one.</td></tr>
+              <tr><td colSpan={10} className="muted pad">No agents yet. Walk up to an empty desk and press E to recruit one.</td></tr>
             )}
           </tbody>
         </table>
@@ -568,6 +574,8 @@ export function AgentModal({ agentId }) {
           ))}
         </div>
 
+        <AgentSpend agent={agent} />
+
         <AgentAccess agent={agent} />
 
         <div className="cosmetics">
@@ -594,6 +602,23 @@ export function AgentModal({ agentId }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+// Total spend and the average per task for each kind of work it has done.
+function AgentSpend({ agent }) {
+  const total = formatTotals(agent.cost);
+  const skills = SKILLS.map((s) => [s, costPerTask(agent.cost, s)]).filter(([, per]) => per.length);
+  return (
+    <div className="spend-row" title={COST_NOTE}>
+      <span className="spend-label">💸 Spend <span className="muted small">(estimate)</span></span>
+      {total ? <b>{total}</b> : <span className="muted small">No costed tasks yet</span>}
+      {skills.map(([s, per]) => (
+        <span key={s} className="spend-skill">
+          {SKILL_INFO[s].icon} {per.map((p) => `${formatPerTask(p, s)} (${p.tasks})`).join(' · ')}
+        </span>
+      ))}
+    </div>
   );
 }
 

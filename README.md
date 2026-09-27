@@ -11,6 +11,7 @@ A multiplayer 3D office for Claude Code agents, inspired by webdevcody's "agent 
 - **Cosmetics.** Beanie at Lv 3, party hat at 5, top hat at 8, mastery aura at 11, crown at 15, halo at 20. Level badges go bronze → silver → gold → diamond.
 - **Asking before using.** Anyone can watch any agent (read-only terminal, laptop screen, card), but using someone else's agent — borrowing it, prompting it, typing into its terminal, or sending it home — takes the owner's permission. Press **R** (or **🔑 Request access**); the owner answers **Allow once** (until it next goes home), **Always**, or **Deny**, and can take access back on the agent's card. The server enforces this for every action.
 - **Borrowing.** Agents run on their **owner's** machine, with the owner's Claude login and repo checkout. Anyone in the office can hire a coworker's idle agent. Its XP and playbook grow no matter who borrowed it, and the Guild Hall tracks who lends the most.
+- **Cost.** The runner reads what each turn spent from the CLI's own transcript, and the agent card, hire dialog and Guild Hall show it next to the XP (e.g. ≈$0.40 per review), so you can see whose agent is cheap to borrow. Claude Code costs are estimates; Copilot's are its AI credits.
 
 ## Engines: Claude Code and GitHub Copilot
 
@@ -21,6 +22,7 @@ A runner offers every supported CLI it finds on your `PATH`, and you pick the en
 | install | `claude` | `npm i -g @github/copilot`, then `copilot login` (or an existing `gh` login) |
 | status + XP | hooks via `--settings` | hooks via a throwaway per-agent plugin (`--plugin-dir`) |
 | playbook | `--append-system-prompt` | an extra `AGENTS.md` via `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` |
+| cost per task | ≈ USD, estimated from the transcript's token counts × API list prices (`runner/cost.js`) | the AI credits Copilot reports (`session.usage_checkpoint` in its `events.jsonl`) |
 | autonomy | `--permission-mode auto` (default) | Copilot's normal approvals by default; the agent shows ✋ **needs you** and anyone can approve in the shared terminal. Pass `--copilot-args "--allow-all-tools"` for full autonomy |
 
 Neither integration touches your repo or your global CLI config. Use `--cli copilot` or `--cli claude,copilot` to restrict what a runner offers. Any other command can be plugged in with `--agent-cmd`: it gets the task as its first argument and reports status by POSTing hook events to `$AGENT_GUILD_HOOK_URL/<event>` (see `scripts/fake-agent.js`).
