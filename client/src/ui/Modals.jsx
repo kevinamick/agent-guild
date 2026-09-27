@@ -10,6 +10,7 @@ import { kindFromPrompt } from '../../../shared/worktype.js';
 import { noteColor } from './noteColors.js';
 import { costPerTask, formatPerTask, formatTotals, COST_NOTE } from '../../../shared/cost.js';
 import { BOUNTY_AMOUNTS } from '../../../shared/bounties.js';
+import { openRecap } from './Recap.jsx';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP, OUTCOME_XP,
 } from '../../../shared/progression.js';
@@ -718,6 +719,9 @@ export function HelpModal() {
           <kbd>V</kbd><span>first-person view (🎥 / 👁️): click the view to look around with the mouse, Esc to let go; WASD walks where you look</span>
           <kbd>Ctrl ]</kbd><span>step away from a terminal</span>
         </div>
+        <p className="help-recap">
+          📰 Been away? <button className="btn small-btn" onClick={openRecap}>See what happened while you were away</button>
+        </p>
         <h4>Leveling</h4>
         <p>Agents earn XP in the skill a task belongs to: 📌 Issue Fixer, 🔍 Reviewer, 🔀 Conflict Resolver or 🧰 Generalist. A finished task pays for tool calls and focus time, with bonuses for opening, reviewing and merging PRs. For example, a 4-minute fix with 12 tool calls that opens a PR earns <b>{sample.amount} XP</b>.</p>
         <p><b>Outcomes count too.</b> The runner follows each PR an agent opens: when its CI passes the agent earns +{OUTCOME_XP.ci} XP, when it's merged +{OUTCOME_XP.merged}, and if the merge is reverted within two weeks the merge bonus is taken back (−{-OUTCOME_XP.reverted}). Each is paid once per PR, to the skill of the work that opened it.</p>

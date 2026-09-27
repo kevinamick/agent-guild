@@ -231,6 +231,52 @@ function GuildHall({ board, agents }) {
   );
 }
 
+// Above the Guild Hall board: office-wide highlights from the last 24 hours.
+function GuildDigest({ board }) {
+  const d = useGame((s) => s.digest);
+  const stats = d && [
+    ['✅', d.tasks, d.tasks === 1 ? 'task' : 'tasks'],
+    ['⭐', d.xp.toLocaleString(), 'XP'],
+    ['🔀', d.prsOpened, d.prsOpened === 1 ? 'PR' : 'PRs'],
+    ['🎉', d.levelUps, d.levelUps === 1 ? 'level-up' : 'level-ups'],
+  ];
+  return (
+    <group position={[board.x, 5.6, board.z]} rotation={[0, Math.PI / 2, 0]}>
+      <mesh castShadow>
+        <boxGeometry args={[5.4, 2.1, 0.12]} />
+        <meshStandardMaterial color="#7c3aed" />
+      </mesh>
+      <mesh position={[0, 0, 0.07]}>
+        <planeGeometry args={[5.0, 1.8]} />
+        <meshStandardMaterial color="#1e1b4b" roughness={1} />
+      </mesh>
+      <Html transform position={[0, 0, 0.1]} scale={0.4} zIndexRange={[4, 0]} style={{ pointerEvents: 'none' }}>
+        <div className="digest-3d">
+          <div className="digest-3d-title">🕒 Last 24h</div>
+          {!d || (!d.tasks && !d.xp) ? (
+            <div className="guild-3d-empty">A quiet day so far</div>
+          ) : (
+            <>
+              <div className="digest-3d-stats">
+                {stats.map(([icon, n, label]) => (
+                  <span key={label}><b>{icon} {n}</b>{label}</span>
+                ))}
+              </div>
+              <div className="digest-3d-top">
+                {d.top.map((a, i) => (
+                  <span key={a.id}>
+                    {['🥇', '🥈', '🥉'][i]} <b>{a.name}</b> <em>+{a.xp}</em>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </Html>
+    </group>
+  );
+}
+
 export function Office() {
   const planks = usePlankTexture();
   const agents = useGame((s) => s.agents);
@@ -309,6 +355,7 @@ export function Office() {
       <Corkboard board={provider === 'ado' ? { ...BOARDS[0], label: 'Work Items' } : BOARDS[0]} items={openIssues} bounties={bounties} />
       <Corkboard board={BOARDS[1]} items={openPrs} />
       <GuildHall board={BOARDS[2]} agents={agents} />
+      <GuildDigest board={BOARDS[2]} />
       <Pictures />
       <Tv />
 

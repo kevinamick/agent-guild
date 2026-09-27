@@ -40,6 +40,9 @@ export const useGame = create(() => ({
   tv: { sharer: null }, // who is screen sharing on the TV (player id)
   bounties: [], // open bounties: { number, amount, by, title, at, workers: [agentId] }
   week: { id: null, mvp: null }, // the weekly leaderboard's ISO week, and last week's MVP
+  recap: null, // "While you were away": the latest recap from the server
+  recapUnseen: false, // one arrived while another window was open
+  digest: null, // the Guild Hall board's "Last 24h" numbers
 }));
 
 let socket = null;
@@ -225,6 +228,17 @@ function handle(msg) {
     case 'playbook':
       useGame.setState((s) => ({ playbooks: { ...s.playbooks, [msg.agentId]: msg } }));
       break;
+    case 'recap': {
+      // On arrival it opens by itself, unless something else (like the first-visit
+      // character creator) is open: then the HUD's 📰 button waits with a dot.
+      const { modal } = useGame.getState();
+      const show = !msg.arrival || !modal || modal.type === 'recap';
+      useGame.setState({ recap: msg.recap, recapUnseen: !show, ...(show && msg.arrival ? { modal: { type: 'recap' } } : {}) });
+      break;
+    }
+    case 'digest':
+      useGame.setState({ digest: msg.digest });
+      break;
     case 'error':
       if (msg.fatal) useGame.setState({ error: msg.text });
       toast(msg.text, 'error');
@@ -267,6 +281,6 @@ export function signOut() {
   const sock = socket;
   socket = null;
   sock?.close();
-  useGame.setState({ status: 'idle', error: null, modal: null, me: null, agents: {}, players: [], desks: {}, boards: {} });
+  useGame.setState({ status: 'idle', error: null, modal: null, me: null, agents: {}, players: [], desks: {}, boards: {}, recap: null, recapUnseen: false, digest: null });
 }
 export const closeModal = () => useGame.setState({ modal: null });

@@ -15,6 +15,8 @@ import { sanitizeAvatar, randomAvatar } from '../shared/avatar.js';
 import { cleanAgentName, sameName } from '../shared/names.js';
 import { createScreen } from './screens.js';
 import { addTurnCost, cleanCost } from '../shared/cost.js';
+import { createActivityLog, createLastSeen } from './activity.js';
+import { summarize, digest, awayLongEnough, oneLine, HOUR, DAY, LOG_MAX_AGE } from './recap.js';
 import {
   isoWeekId, addWeekly, weeklyOf, pickMvp, bountyProblem, recordWork, resolveClaim, createBountyStore,
 } from './bounties.js';
@@ -43,6 +45,8 @@ const { values: opts } = parseArgs({
     'ice-servers': { type: 'string', default: process.env.GUILD_ICE_SERVERS || '[{"urls":"stun:stun.l.google.com:19302"}]' },
     // What coworkers run to host agents: a package npx can fetch (the repo's latest tarball).
     'runner-package': { type: 'string', default: process.env.GUILD_RUNNER_PACKAGE || 'https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz' },
+    // Seconds someone must have been away before walking in shows "While you were away".
+    'recap-after': { type: 'string', default: process.env.GUILD_RECAP_AFTER || '3600' },
   },
 });
 
@@ -67,6 +71,7 @@ if (keys.isEmpty()) bootstrapKey = keys.issue(opts.admin, true, 'main', { owner:
 const RUNNER_GRACE_MS = 10 * 60 * 1000;
 // While bounties are open, the server re-reads the issues board this often to spot closes.
 const BOUNTY_POLL_MS = Number(process.env.GUILD_BOUNTY_POLL_MS) || 3 * 60 * 1000;
+const RECAP_AFTER_MS = (Number.isFinite(+opts['recap-after']) ? Math.max(0, +opts['recap-after']) : 3600) * 1000;
 let ICE_SERVERS;
 try {
   ICE_SERVERS = JSON.parse(opts['ice-servers']);
@@ -119,6 +124,9 @@ function createOffice(officeId, officeName, dataDir) {
   const pictures = createPictureStore(path.join(dataDir, 'pictures'), PICTURE_SPOTS);
   let tvSharer = null; // player id sharing their screen on this office's TV (one at a time)
   const bounties = createBountyStore(path.join(dataDir, 'bounties.json'));
+  // "While you were away": what happened in the office, and when each person was last here.
+  const activity = createActivityLog(path.join(dataDir, 'activity.json'));
+  const lastSeen = createLastSeen(path.join(dataDir, 'lastseen.json'));
 
   // ---------------------------------------------------------------- persistence
 
@@ -236,9 +244,40 @@ function createOffice(officeId, officeName, dataDir) {
     });
   }
 
+  // ---------------------------------------------------------------- activity log
+  // One call per meaningful event: logActivity(type, data). Pass `agentId` for
+  // anything about an agent (its current name and owner are filled in). The types
+  // the recap understands are listed in server/recap.js; any other type is kept
+  // and counted, so new features can log their own events.
+  function logActivity(type, data = {}) {
+    const p = data.agentId ? profiles.get(data.agentId) : null;
+    const entry = activity.add(type, p ? { agent: p.name, owner: p.owner, ...data } : data);
+    pushDigest();
+    return entry;
+  }
+
+  // The Guild Hall board's "Last 24h" panel, sent to everyone as the log grows.
+  const currentDigest = () => digest(activity.entries(), Date.now(), DAY);
+  let digestTimer = null;
+  function pushDigest() {
+    if (digestTimer) return;
+    digestTimer = setTimeout(() => {
+      digestTimer = null;
+      broadcast({ t: 'digest', digest: currentDigest() });
+    }, 1500);
+  }
+
+  // What happened since `since`, for one person: built here, shown by the client.
+  function recapFor(name, since) {
+    const agents = Object.fromEntries([...profiles].map(([id, p]) => [id, { name: p.name, owner: p.owner, color: p.color }]));
+    const hands = [...live].filter(([, l]) => l.deskId && l.runnerId && l.status === 'waiting').map(([agentId, l]) => ({ agentId, activity: l.activity }));
+    return summarize(activity.since(since), { since, until: Date.now(), me: name, agents, hands, requests: requestsFor(name) });
+  }
+
   // ---------------------------------------------------------------- XP ledger
 
-  function grantXp(agentId, skill, amount, reasons, from, bountiesWon = 0) {
+  // `durable`: on disk before anyone hears about it (for XP a runner will be acknowledged for).
+  function grantXp(agentId, skill, amount, reasons, from, bountiesWon = 0, { durable = false } = {}) {
     const p = profiles.get(agentId);
     if (!p || amount <= 0) return;
     addWeekly(p, rollWeek(), amount, bountiesWon);
@@ -247,7 +286,11 @@ function createOffice(officeId, officeName, dataDir) {
     p.xp[skill] = (p.xp[skill] || 0) + amount;
     const afterSkill = levelFor(p.xp[skill]);
     const afterOverall = overallLevel(p.xp);
-    saveProfiles();
+    if (durable) flushProfiles();
+    else saveProfiles();
+    logActivity('xp', { agentId, skill, xp: amount, reasons, from: from || null });
+    if (afterSkill > beforeSkill) logActivity('levelup', { agentId, skill, level: afterSkill });
+    if (afterOverall > beforeOverall) logActivity('levelup', { agentId, skill: null, level: afterOverall, overall: true });
     broadcast({ t: 'event', kind: 'xp', agentId, skill, amount, reasons, from });
     if (afterSkill > beforeSkill) {
       broadcast({ t: 'event', kind: 'levelup', agentId, skill, level: afterSkill });
@@ -263,12 +306,13 @@ function createOffice(officeId, officeName, dataDir) {
   }
 
   // Takes XP back (a reverted PR), never below zero for the skill. Levels can drop.
-  function takeXp(agentId, skill, amount, reasons) {
+  function takeXp(agentId, skill, amount, reasons, { durable = false } = {}) {
     const p = profiles.get(agentId);
     const taken = Math.min(amount, p?.xp[skill] || 0);
     if (!p || taken <= 0) return;
     p.xp[skill] -= taken;
-    saveProfiles();
+    if (durable) flushProfiles();
+    else saveProfiles();
     broadcast({ t: 'event', kind: 'xp', agentId, skill, amount: -taken, reasons });
     const runner = runnerFor(p.owner);
     if (runner) send(runner.ws, { t: 'profile', agent: runnerAgent(agentId) });
@@ -288,10 +332,12 @@ function createOffice(officeId, officeName, dataDir) {
     if (award) {
       p.stats[OUTCOME_STATS[o.event]] = (p.stats[OUTCOME_STATS[o.event]] || 0) + 1;
       const { amount, reasons } = outcomeXp(o.event, o.number, p.xp[skill] || 0);
-      toast(`${OUTCOME_ICONS[o.event]} ${p.name}: ${reasons[0]} XP`);
-      if (amount > 0) grantXp(p.id, skill, amount, reasons, null);
-      else if (amount < 0) takeXp(p.id, skill, -amount, reasons);
+      // The ledger and the XP reach disk before the office hears about it: a crash
+      // just after must not let the runner's re-send pay again.
+      if (amount > 0) grantXp(p.id, skill, amount, reasons, null, 0, { durable: true });
+      else if (amount < 0) takeXp(p.id, skill, -amount, reasons, { durable: true });
       else pushState();
+      toast(`${OUTCOME_ICONS[o.event]} ${p.name}: ${reasons[0]} XP`);
     }
     // On disk before the ack, so a crash can't leave an outcome acknowledged but unrecorded.
     flushProfiles();
@@ -382,6 +428,7 @@ function createOffice(officeId, officeName, dataDir) {
     if (borrowed) profile.stats.borrowed++;
     noteBountyWork(profile.id, l);
     saveProfiles();
+    logActivity('hired', { agentId: profile.id, by: player.name, borrowed });
 
     send(runner.ws, {
       t: 'spawn',
@@ -447,6 +494,7 @@ function createOffice(officeId, officeName, dataDir) {
     dropScreen(agentId, l);
     endSessionGrants(profiles.get(agentId));
     saveProfiles();
+    logActivity('home', { agentId, by: by || null });
     if (by) toast(`${by} sent ${profiles.get(agentId).name} home`);
     pushState();
   }
@@ -574,6 +622,7 @@ function createOffice(officeId, officeName, dataDir) {
         if (mine.length >= 10) return send(player.ws, { t: 'error', text: 'You have too many requests waiting. Wait for answers first.' });
         const req = { id: crypto.randomUUID(), agentId: p.id, agentName: p.name, from: player.name, at: Date.now() };
         requests.set(req.id, req);
+        logActivity('access-request', { agentId: p.id, from: player.name });
         sendRequests(p.owner);
         const here = socketsOf(p.owner).length > 0;
         send(player.ws, { t: 'event', kind: 'toast', text: `🔑 Asked ${p.owner} to use ${p.name}.${here ? '' : ` ${p.owner} isn't in the office; they'll see it when they're back.`}` });
@@ -701,6 +750,13 @@ function createOffice(officeId, officeName, dataDir) {
       case 'my-links':
         send(player.ws, { t: 'my-links', ...inviteLinks(null) });
         break;
+      case 'recap': {
+        // Reopening the recap: since they walked in after being away, or the last N hours.
+        const hours = Math.min(LOG_MAX_AGE / HOUR, Math.max(1, +msg.hours || 24));
+        const since = msg.hours || !player.awaySince ? Date.now() - hours * HOUR : player.awaySince;
+        send(player.ws, { t: 'recap', recap: recapFor(player.name, since) });
+        break;
+      }
       case 'playbook': {
         const p = profiles.get(msg.agentId);
         const runner = p && runnerFor(p.owner);
@@ -928,8 +984,9 @@ function createOffice(officeId, officeName, dataDir) {
         }
         break;
       }
-      case 'status':
+      case 'status': {
         if (!l.deskId) return;
+        const was = l.status;
         l.status = msg.status;
         if (msg.activity !== undefined) l.activity = String(msg.activity).slice(0, 160);
         // The runner works out what kind of work this is from the prompt and what the agent does.
@@ -937,13 +994,16 @@ function createOffice(officeId, officeName, dataDir) {
         if (msg.status === 'working' && msg.newTurn) {
           l.turnId++;
           l.kudosBy.clear();
+          l.turnPrompt = l.activity; // a new turn's activity is the prompt's first line
         }
+        if (msg.status === 'waiting' && was !== 'waiting') logActivity('hand', { agentId: msg.agentId, activity: l.activity });
         if (msg.status === 'done' && l.task?.requestedBy) {
           const requester = playerByName(l.task.requestedBy);
           if (requester) send(requester.ws, { t: 'event', kind: 'done', agentId: msg.agentId });
         }
         pushState();
         break;
+      }
       case 'size': {
         // The PTY's real size: the laptop copy and every viewer follow it so lines wrap the same.
         l.cols = msg.cols | 0;
@@ -971,16 +1031,27 @@ function createOffice(officeId, officeName, dataDir) {
           saveProfiles();
         }
         const from = l.task?.borrowed ? l.task.requestedBy : null;
+        if ((stats.toolCalls || 0) > 0) {
+          const summary = oneLine(l.turnPrompt || l.task?.text || l.activity);
+          logActivity('task', { agentId: msg.agentId, skill: kind, xp: amount, summary, by: l.task?.requestedBy || null, borrowed: Boolean(l.task?.borrowed) });
+        }
+        if (stats.prOpened) logActivity('pr-opened', { agentId: msg.agentId });
+        if (stats.prMerged) logActivity('pr-merged', { agentId: msg.agentId });
         grantXp(msg.agentId, kind, amount, reasons, from);
         noteBountyWork(msg.agentId, l, { turnEnded: true, prOpened: Boolean(stats.prOpened) });
         break;
       }
-      case 'lessons':
+      case 'lessons': {
+        const before = l.lessons || {};
         l.lessons = msg.lessons || {};
+        for (const [skill, n] of Object.entries(l.lessons)) {
+          if ((n || 0) > (before[skill] || 0)) logActivity('lessons', { agentId: msg.agentId, skill, added: n - (before[skill] || 0) });
+        }
         profiles.get(msg.agentId).lessons = l.lessons;
         saveProfiles();
         pushState();
         break;
+      }
       case 'exit':
         if (l.deskId) {
           toast(`${profiles.get(msg.agentId).name}'s session ended`);
@@ -1033,11 +1104,16 @@ function createOffice(officeId, officeName, dataDir) {
       avatar = randomAvatar();
       saveAvatar(officeId, name, avatar);
     }
+    // A replaced tab never left; otherwise, were they away long enough for a recap?
+    const seen = previous ? null : lastSeen.get(name);
+    const away = awayLongEnough(seen, Date.now(), RECAP_AFTER_MS);
     const player = {
       id, ws, name, admin: ident.admin, owner: Boolean(ident.owner), avatar, color: avatar.shirt,
       x: +url.searchParams.get('x') || 0, z: +url.searchParams.get('z') || 11, ry: Math.PI, moved: true,
+      awaySince: away ? seen : previous?.awaySince ?? null,
     };
     players.set(id, player);
+    lastSeen.touch(name);
     send(ws, {
       t: 'welcome', you: id,
       me: { name, admin: ident.admin, owner: player.owner, avatar, avatarChosen: Boolean(avatar.chosen) },
@@ -1045,6 +1121,11 @@ function createOffice(officeId, officeName, dataDir) {
     });
     for (const [agentId, l] of live) if (l.deskId && l.screen) send(ws, { t: 'screen', agentId, ...l.screen.full() });
     if (requestsFor(name).length) send(ws, { t: 'access-requests', requests: requestsFor(name) });
+    send(ws, { t: 'digest', digest: currentDigest() });
+    if (away) {
+      const recap = recapFor(name, seen);
+      if (!recap.empty) send(ws, { t: 'recap', recap, arrival: true });
+    }
     if (!previous) toast(`👋 ${name} walked into the office`);
     pushState();
 
@@ -1062,10 +1143,18 @@ function createOffice(officeId, officeName, dataDir) {
       }
       if (players.get(id) !== player) return;
       players.delete(id);
+      lastSeen.touch(name);
       for (const l of live.values()) l.viewers.delete(id);
       pushState();
     });
   }
+
+  // While people are here, keep their "last seen" fresh (a crash can't lose much),
+  // and refresh the board's "Last 24h" panel so old events age out.
+  setInterval(() => {
+    for (const p of players.values()) lastSeen.touch(p.name);
+  }, 60000);
+  setInterval(() => players.size && pushDigest(), 10 * 60000);
 
   // Laptop screens: twice a second, send each office the rows that changed.
   setInterval(() => {
@@ -1089,6 +1178,12 @@ function createOffice(officeId, officeName, dataDir) {
     connectPlayer,
     pictureFile: pictures.file,
     stats: () => ({ players: players.size, runners: runners.size, agents: profiles.size }),
+    logActivity,
+    flush() {
+      for (const p of players.values()) lastSeen.touch(p.name);
+      activity.flush();
+      lastSeen.flush();
+    },
   };
 }
 
@@ -1215,6 +1310,20 @@ setInterval(() => {
     ws.ping();
   }
 }, 20000);
+
+// Write what's still waiting to be saved (activity log, last seen) before exiting.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    for (const o of offices.values()) {
+      try {
+        o.flush();
+      } catch (e) {
+        console.error('flush', e);
+      }
+    }
+    process.exit(0);
+  });
+}
 
 server.listen(+opts.port, opts.host, () => {
   const { joinUrl, runnerCmd } = inviteLinks(bootstrapKey);

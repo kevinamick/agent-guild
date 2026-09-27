@@ -9,6 +9,7 @@ import { BoardModal, HireModal, PromptModal, RosterModal, AgentModal, HelpModal,
 import { PictureModal, interactPicture } from './ui/PictureModal.jsx';
 import { Soundscape } from './ui/Sound.jsx';
 import { TvModal } from './ui/TvModal.jsx';
+import { RecapModal } from './ui/Recap.jsx';
 import { tvInteract } from './rtc/screenShare.js';
 import { toggleFirstPerson } from './scene/cameraMode.js';
 import { FirstPersonOverlay } from './ui/ViewToggle.jsx';
@@ -82,6 +83,8 @@ function ModalRouter() {
       return <PictureModal key={modal.spot} spot={modal.spot} />;
     case 'tv':
       return <TvModal />;
+    case 'recap':
+      return <RecapModal />;
     default:
       return null;
   }
