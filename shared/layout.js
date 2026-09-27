@@ -42,8 +42,19 @@ export function nearestFreeDesk(occupied, from = DOOR) {
     .sort((a, b) => Math.hypot(a.x - from.x, a.z - from.z) - Math.hypot(b.x - from.x, b.z - from.z))[0];
 }
 
-// Pods are solid for the walking player; this returns the blocking rectangles.
-export const OBSTACLES = PODS.map((p) => ({ minX: p.x - 2.1, maxX: p.x + 2.1, minZ: p.z - 1.25, maxZ: p.z + 1.25 }));
+// The screen-sharing TV on the left wall (facing +x), with a lounge in front:
+// a rug and a couch facing the screen. The couch leaves a walkway to the pod
+// behind it and room to stand right in front of the TV.
+export const TV = {
+  x: -19.85, z: -8, y: 2.8, w: 5, h: 2.8,
+  couch: { x: -15.2, z: -8, w: 0.9, d: 2.6 }, // w along x, d along z
+};
+
+// Pods and the TV couch are solid for the walking player; these are the blocking rectangles.
+export const OBSTACLES = [
+  ...PODS.map((p) => ({ minX: p.x - 2.1, maxX: p.x + 2.1, minZ: p.z - 1.25, maxZ: p.z + 1.25 })),
+  { minX: TV.couch.x - TV.couch.w / 2, maxX: TV.couch.x + TV.couch.w / 2, minZ: TV.couch.z - TV.couch.d / 2, maxZ: TV.couch.z + TV.couch.d / 2 },
+];
 
 // ---------------------------------------------------------------- upper floor
 // The boss's office is a raised corner office over the front-right corner,

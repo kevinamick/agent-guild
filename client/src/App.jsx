@@ -5,6 +5,8 @@ import { TopLeft, TopRight, InteractionBar, Toasts, Chat } from './ui/Hud.jsx';
 import { TerminalModal } from './ui/Terminal.jsx';
 import { CharacterModal } from './ui/Character.jsx';
 import { BoardModal, HireModal, PromptModal, RosterModal, AgentModal, HelpModal, TeamModal } from './ui/Modals.jsx';
+import { TvModal } from './ui/TvModal.jsx';
+import { tvInteract } from './rtc/screenShare.js';
 
 
 function readSaved() {
@@ -71,6 +73,8 @@ function ModalRouter() {
       return <TeamModal />;
     case 'character':
       return <CharacterModal first={modal.first} />;
+    case 'tv':
+      return <TvModal />;
     default:
       return null;
   }
@@ -88,6 +92,10 @@ function interact(key) {
   if (focus.type === 'board') {
     if (key !== 'e') return;
     return focus.board === 'guild' ? openModal({ type: 'roster' }) : openModal({ type: 'board', kind: focus.board });
+  }
+  if (focus.type === 'tv') {
+    if (key === 'e') tvInteract();
+    return;
   }
   if (focus.type === 'desk') {
     if (key === 'e' || key === 'h') openModal({ type: 'hire', deskId: focus.deskId, kind: 'general' });

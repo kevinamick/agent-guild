@@ -8,6 +8,7 @@ import { Person, Bot } from './Characters.jsx';
 import { useGame, positions, localPlayer, sendMove } from '../net.js';
 import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK } from '../../../shared/layout.js';
 import { SKILL_INFO } from '../../../shared/progression.js';
+import { tvReach } from '../../../shared/tv.js';
 
 export const keys = new Set();
 const SPEED = 5.5;
@@ -52,6 +53,8 @@ function findFocus(x, z, level) {
     const d = b.side ? Math.hypot(b.x - x, (b.z - z) * 0.45) : Math.hypot((b.x - x) * 0.45, b.z - z);
     if (d < 2.6) consider(d, { type: 'board', board: b.id });
   }
+  const tv = tvReach(x, z);
+  if (tv !== null) consider(tv, { type: 'tv' });
   return best;
 }
 
