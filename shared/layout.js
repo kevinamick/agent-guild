@@ -64,11 +64,87 @@ export const TV = {
   couch: { x: -15.2, z: -8, w: 0.9, d: 2.6 }, // w along x, d along z
 };
 
-// Pods and the TV couch are solid for the walking player; these are the blocking rectangles.
+// ---------------------------------------------------------------- furniture
+// Everything here sits off the agents' walking routes (see agentPath), clear of
+// the boards, the TV, the picture spots and the foot of the stairs.
+
+// The lounge nook in the back-left corner: a sofa under the window, two armchairs
+// and a coffee table on a rug. Sizes: w along x, d along z.
+export const LOUNGE = {
+  rug: { x: -12.4, z: -11.75, w: 5.2, d: 3.5 },
+  sofa: { x: -12.4, z: -13.47, w: 3, d: 0.95 },
+  table: { x: -12.4, z: -11.75, r: 0.5 },
+  chairs: [
+    { x: -14.55, z: -11.55, ry: Math.PI / 2 }, // facing +x, toward the table
+    { x: -10.25, z: -11.55, ry: -Math.PI / 2 },
+  ],
+  lamp: { x: -14.75, z: -13.35 },
+};
+
+// The coffee bar along the back wall under the right-hand window, a tall fridge
+// beside it and three stools in front.
+export const COFFEE_BAR = { x0: 11, x1: 17.2, d: 0.7, h: 0.95, stools: [12.2, 13.8, 15.4], stoolZ: -12.8, fridge: { x0: 17.35, x1: 18.45, h: 2.15 } };
+
+// Open shelving on the right wall between the last picture spot and the stairs.
+export const SHELF = { x: ROOM.maxX, z0: -2.9, z1: 0.4, d: 0.42, h: 2.6 };
+
+// Potted plants on the ground floor (kind: fig, monstera or snake; s = scale).
+// The ones under the stairs sit where nobody can walk anyway.
+export const PLANTERS = [
+  { kind: 'fig', x: -19.1, z: -13.25, s: 1.25 },
+  { kind: 'monstera', x: -15.75, z: -13.2, s: 1 },
+  { kind: 'fig', x: 19.15, z: -13.25, s: 1.2 },
+  { kind: 'monstera', x: 10.2, z: -13.25, s: 0.85 },
+  { kind: 'fig', x: -19.1, z: 13.3, s: 1.15 },
+  { kind: 'fig', x: 19.1, z: 13.3, s: 1.05 },
+  { kind: 'monstera', x: 18.5, z: 7.9, s: 0.8 },
+  { kind: 'snake', x: 18.6, z: 5.9, s: 1 },
+];
+const PLANTER_R = { fig: 0.34, monstera: 0.42, snake: 0.24 };
+
+const rect = (x, z, w, d) => ({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
+export const FURNITURE = [
+  rect(LOUNGE.sofa.x, LOUNGE.sofa.z, LOUNGE.sofa.w, LOUNGE.sofa.d),
+  rect(LOUNGE.table.x, LOUNGE.table.z, LOUNGE.table.r * 2, LOUNGE.table.r * 2),
+  ...LOUNGE.chairs.map((c) => rect(c.x, c.z, 0.85, 0.85)),
+  rect(LOUNGE.lamp.x, LOUNGE.lamp.z, 0.4, 0.4),
+  { minX: COFFEE_BAR.x0, maxX: COFFEE_BAR.fridge.x1, minZ: ROOM.minZ, maxZ: ROOM.minZ + COFFEE_BAR.d },
+  { minX: COFFEE_BAR.stools[0] - 0.3, maxX: COFFEE_BAR.stools[COFFEE_BAR.stools.length - 1] + 0.3, minZ: COFFEE_BAR.stoolZ - 0.3, maxZ: COFFEE_BAR.stoolZ + 0.3 },
+  { minX: SHELF.x - SHELF.d, maxX: SHELF.x, minZ: SHELF.z0, maxZ: SHELF.z1 },
+  ...PLANTERS.map((p) => rect(p.x, p.z, PLANTER_R[p.kind] * 2 * p.s, PLANTER_R[p.kind] * 2 * p.s)),
+];
+
+// Pods, the TV couch and the furniture are solid for the walking player; these are the blocking rectangles.
 export const OBSTACLES = [
   ...PODS.map((p) => ({ minX: p.x - 2.1, maxX: p.x + 2.1, minZ: p.z - 1.25, maxZ: p.z + 1.25 })),
   { minX: TV.couch.x - TV.couch.w / 2, maxX: TV.couch.x + TV.couch.w / 2, minZ: TV.couch.z - TV.couch.d / 2, maxZ: TV.couch.z + TV.couch.d / 2 },
+  ...FURNITURE,
 ];
+
+// The route a newly hired agent walks from the door to its seat: across the
+// front of the room, down an aisle, along the pod and in. It takes the nearest
+// aisle whose route doesn't run through furniture. Returns [x, z] points.
+const AISLES = [-16.5, -5.5, 5.5, 16.5];
+const onRoute = (pts) => {
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i];
+    const [bx, bz] = pts[i + 1];
+    const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 0.1);
+    for (let k = 0; k <= n; k++) {
+      const x = ax + ((bx - ax) * k) / n;
+      const z = az + ((bz - az) * k) / n;
+      if (OBSTACLES.some((o) => x > o.minX && x < o.maxX && z > o.minZ && z < o.maxZ)) return false;
+    }
+  }
+  return true;
+};
+export function agentPath(desk) {
+  const outward = desk.ry === 0 ? -1 : 1;
+  const wz = desk.seatZ + outward * 0.9;
+  const route = (cx) => [[DOOR.x, DOOR.z], [cx, 12], [cx, wz], [desk.seatX, wz], [desk.seatX, desk.seatZ]];
+  const byDistance = [...AISLES].sort((a, b) => Math.abs(a - desk.seatX) - Math.abs(b - desk.seatX));
+  return route(byDistance.find((cx) => onRoute(route(cx).slice(0, 4))) ?? byDistance[0]);
+}
 
 // ---------------------------------------------------------------- upper floor
 // The boss's office is a raised corner office over the front-right corner,

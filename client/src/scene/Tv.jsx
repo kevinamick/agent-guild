@@ -5,6 +5,7 @@ import { TV } from '../../../shared/layout.js';
 import { fitContain, tvVolume } from '../../../shared/tv.js';
 import { useGame, localPlayer } from '../net.js';
 import { useTv } from '../rtc/screenShare.js';
+import { Sofa } from './Lounge.jsx';
 
 // A text card drawn on a canvas, for the TV's idle/connecting screen and its LIVE tag.
 function useCardTexture(draw, deps) {
@@ -156,50 +157,25 @@ function Screen() {
   );
 }
 
+// The couch facing the TV matches the lounge nook's sofa (built facing +z, so turned toward -x).
 function Couch() {
   const { x, z, w, d } = TV.couch;
-  const fabric = '#7c9cc9';
-  return (
-    // Built facing -x (toward the TV): the backrest is on the +x side.
-    <group position={[x, 0, z]}>
-      <mesh position={[0, 0.25, 0]} castShadow receiveShadow>
-        <boxGeometry args={[w, 0.3, d]} />
-        <meshStandardMaterial color={fabric} roughness={0.9} />
-      </mesh>
-      {[-d / 4, d / 4].map((cz) => (
-        <mesh key={cz} position={[-0.08, 0.46, cz]} castShadow>
-          <boxGeometry args={[w - 0.2, 0.14, d / 2 - 0.3]} />
-          <meshStandardMaterial color="#93b4e0" roughness={0.95} />
-        </mesh>
-      ))}
-      <mesh position={[w / 2 - 0.12, 0.62, 0]} castShadow>
-        <boxGeometry args={[0.24, 0.85, d]} />
-        <meshStandardMaterial color={fabric} roughness={0.9} />
-      </mesh>
-      {[-1, 1].map((s) => (
-        <mesh key={s} position={[0, 0.5, s * (d / 2 - 0.1)]} castShadow>
-          <boxGeometry args={[w, 0.5, 0.2]} />
-          <meshStandardMaterial color="#6b89b5" roughness={0.9} />
-        </mesh>
-      ))}
-    </group>
-  );
+  return <Sofa w={d} d={w} position={[x, 0, z]} rotation={[0, -Math.PI / 2, 0]} fabric="#77876b" cushions={['#e5dccb', '#c0664a']} />;
 }
 
+// A slim tripod floor lamp with a linen drum shade.
 function FloorLamp({ position }) {
   return (
     <group position={position}>
-      <mesh position={[0, 0.03, 0]}>
-        <cylinderGeometry args={[0.22, 0.22, 0.06, 16]} />
-        <meshStandardMaterial color="#334155" />
-      </mesh>
-      <mesh position={[0, 0.8, 0]}>
-        <cylinderGeometry args={[0.03, 0.03, 1.6, 8]} />
-        <meshStandardMaterial color="#334155" />
-      </mesh>
-      <mesh position={[0, 1.7, 0]} castShadow>
-        <cylinderGeometry args={[0.2, 0.32, 0.36, 18, 1, true]} />
-        <meshStandardMaterial color="#fde68a" emissive="#fde68a" emissiveIntensity={0.35} side={THREE.DoubleSide} />
+      {[0, 1, 2].map((i) => (
+        <mesh key={i} position={[Math.sin((i * Math.PI * 2) / 3) * 0.13, 0.75, Math.cos((i * Math.PI * 2) / 3) * 0.13]} rotation={[Math.cos((i * Math.PI * 2) / 3) * -0.17, 0, Math.sin((i * Math.PI * 2) / 3) * 0.17]}>
+          <cylinderGeometry args={[0.014, 0.014, 1.5, 6]} />
+          <meshStandardMaterial color="#b48f64" roughness={0.6} />
+        </mesh>
+      ))}
+      <mesh position={[0, 1.62, 0]} castShadow>
+        <cylinderGeometry args={[0.26, 0.26, 0.34, 24, 1, true]} />
+        <meshStandardMaterial color="#f3e7d0" emissive="#ffd9a0" emissiveIntensity={0.45} side={THREE.DoubleSide} />
       </mesh>
     </group>
   );
@@ -224,7 +200,7 @@ export function Tv() {
         {/* floating shelf with a soundbar */}
         <mesh position={[0, -TV.h / 2 - 0.55, 0.2]} castShadow>
           <boxGeometry args={[3.4, 0.07, 0.4]} />
-          <meshStandardMaterial color="#8a5a2b" roughness={0.7} />
+          <meshStandardMaterial color="#c9a57a" roughness={0.6} />
         </mesh>
         <mesh position={[0, -TV.h / 2 - 0.43, 0.2]} castShadow>
           <boxGeometry args={[2.2, 0.16, 0.2]} />
@@ -235,13 +211,14 @@ export function Tv() {
           <meshStandardMaterial color="#374151" roughness={1} />
         </mesh>
       </group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[rugX, 0.014, TV.z]} receiveShadow>
+      {/* a charcoal flatweave rug with an oat border */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[rugX, 0.012, TV.z]} receiveShadow>
         <planeGeometry args={[rugW, TV.w - 0.4]} />
-        <meshStandardMaterial color="#c7b8f5" roughness={1} />
+        <meshStandardMaterial color="#d9cfbd" roughness={1} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[rugX, 0.016, TV.z]}>
-        <ringGeometry args={[1.2, 1.32, 40]} />
-        <meshStandardMaterial color="#fde68a" />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[rugX, 0.014, TV.z]} receiveShadow>
+        <planeGeometry args={[rugW - 0.3, TV.w - 0.7]} />
+        <meshStandardMaterial color="#56514b" roughness={1} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
       </mesh>
       <Couch />
       <FloorLamp position={[TV.couch.x + 0.1, 0, TV.z - TV.couch.d / 2 - 0.45]} />

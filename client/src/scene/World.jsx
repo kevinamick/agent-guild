@@ -6,7 +6,7 @@ import { Office } from './Office.jsx';
 import { view } from './view.js';
 import { Person, Bot } from './Characters.jsx';
 import { useGame, positions, localPlayer, sendMove } from '../net.js';
-import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK, PICTURE_SPOTS, MEZZ, TV } from '../../../shared/layout.js';
+import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK, PICTURE_SPOTS, MEZZ, TV, agentPath } from '../../../shared/layout.js';
 import { SKILL_INFO } from '../../../shared/progression.js';
 import { tvReach } from '../../../shared/tv.js';
 import { useCameraMode, look as fpView } from './cameraMode.js';
@@ -252,16 +252,7 @@ function RemotePlayer({ player }) {
 }
 
 function walkPath(desk) {
-  const outward = desk.ry === 0 ? -1 : 1;
-  const wz = desk.seatZ + outward * 0.9;
-  const cx = [-5.5, 5.5, -16.5, 16.5].reduce((a, b) => (Math.abs(b - desk.seatX) < Math.abs(a - desk.seatX) ? b : a));
-  return [
-    [DOOR.x, DOOR.z],
-    [cx, 12],
-    [cx, wz],
-    [desk.seatX, wz],
-    [desk.seatX, desk.seatZ],
-  ].map(([x, z]) => new THREE.Vector2(x, z));
+  return agentPath(desk).map(([x, z]) => new THREE.Vector2(x, z));
 }
 
 function AgentAtDesk({ agent, desk }) {
@@ -373,13 +364,16 @@ function Players() {
 
 export function World() {
   return (
-    <Canvas shadows dpr={[1, 2]} camera={{ fov: 55, near: 0.1, far: 200 }} gl={{ antialias: true }}>
-      <color attach="background" args={['#f3e9d8']} />
-      <hemisphereLight args={['#fffaf0', '#d9c7a8', 0.9]} />
-      <ambientLight intensity={0.35} />
+    <Canvas shadows="percentage" dpr={[1, 2]} camera={{ fov: 55, near: 0.1, far: 200 }} gl={{ antialias: true }}>
+      <color attach="background" args={['#d9d3ca']} />
+      {/* Soft daylight: a warm sky/floor bounce, a little ambient fill, and one
+          warm sun-like key light (the only shadow caster). */}
+      <hemisphereLight args={['#fff4e4', '#8a7866', 0.85]} />
+      <ambientLight intensity={0.3} />
       <directionalLight
         position={[8, 18, 10]}
-        intensity={1.5}
+        intensity={1.45}
+        color="#fff0dc"
         castShadow
         shadow-mapSize={[2048, 2048]}
         shadow-camera-left={-24}
@@ -387,6 +381,7 @@ export function World() {
         shadow-camera-top={18}
         shadow-camera-bottom={-18}
         shadow-bias={-0.0005}
+        shadow-normalBias={0.02}
       />
       <Office />
       <Agents />
