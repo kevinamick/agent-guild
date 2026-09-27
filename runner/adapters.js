@@ -4,6 +4,7 @@
 // each CLI prefers: a system-prompt flag for Claude, an instructions dir for Copilot.
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const hookCommand = (url, event) =>
   `curl -s -m 2 -X POST -H 'content-type: application/json' --data-binary @- ${url}/${event} >/dev/null 2>&1 || true`;
@@ -80,32 +81,173 @@ export function customAdapter(cmd) {
   };
 }
 
-// Find an executable on PATH and return its full path. Besides the bare name
-// (`copilot`), this finds `copilot.exe` (e.g. installed by WinGet) and, on
-// Windows, the other PATHEXT forms such as the `copilot.cmd` shim npm creates.
-export function resolveBin(bin, { env = process.env, platform = process.platform } = {}) {
-  if (bin.includes('/') || bin.includes('\\')) return fs.existsSync(bin) ? bin : null;
-  // On Windows, launchers (PATHEXT: .exe, .cmd, …) come before extensionless files:
-  // the Azure CLI and npm install an extensionless bash script next to the real
-  // `az.cmd` / `copilot.cmd`, and Windows can't start the script.
-  const exts =
-    platform === 'win32'
-      ? [...new Set((env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase())), '']
-      : ['', '.exe'];
-  const sep = platform === 'win32' ? ';' : ':';
-  for (const dir of (env.PATH || env.Path || '').split(sep).filter(Boolean)) {
-    for (const ext of exts) {
-      const file = path.join(dir, bin + ext);
-      try {
-        fs.accessSync(file, fs.constants.X_OK);
-        if (fs.statSync(file).isFile()) return file;
-      } catch {}
+// Windows only starts these directly (batch files via cmd.exe). PATHEXT also
+// lists .VBS/.JS/.WSF etc., which need a script host, so those are skipped, and
+// so are extensionless files such as the `copilot` sh script npm writes next to
+// copilot.cmd for Git Bash: it exists, but CreateProcess can't run it.
+const WIN_RUNNABLE = ['.com', '.exe', '.bat', '.cmd'];
+
+// process.env is case-insensitive on Windows, but a copy of it isn't.
+function getEnv(env, name, platform) {
+  if (env[name] !== undefined || platform !== 'win32') return env[name];
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase());
+  return key && env[key];
+}
+
+// PATH entries as Windows reads them: `;`-separated, maybe quoted, and maybe
+// holding an unexpanded %VAR% when Path was saved as a plain string.
+export function pathDirs({ env = process.env, platform = process.platform } = {}) {
+  const raw = getEnv(env, 'PATH', platform) || '';
+  if (platform !== 'win32') return raw.split(':').filter(Boolean);
+  return raw
+    .split(';')
+    .map((d) => d.trim().replace(/^"(.*)"$/, '$1').replace(/%([^%]+)%/g, (m, v) => getEnv(env, v, platform) ?? m))
+    .filter(Boolean);
+}
+
+// Where Windows installers put CLIs. A terminal opened before an install keeps
+// its old PATH, so a CLI can be installed yet not on the PATH we were given.
+export function knownDirs({ env = process.env, platform = process.platform } = {}) {
+  if (platform !== 'win32') return [];
+  const get = (name) => getEnv(env, name, platform);
+  const local = get('LOCALAPPDATA');
+  const dirs = [
+    get('npm_config_prefix'), // npm -g puts copilot.cmd here; npx tells us where
+    get('APPDATA') && path.join(get('APPDATA'), 'npm'), // npm's default prefix
+    get('USERPROFILE') && path.join(get('USERPROFILE'), '.local', 'bin'), // Claude Code's installer (claude.exe)
+    local && path.join(local, 'Microsoft', 'WinGet', 'Links'), // winget install GitHub.Copilot
+    local && path.join(local, 'Microsoft', 'WindowsApps'), // App Execution Aliases
+  ].filter(Boolean);
+  const onPath = new Set(pathDirs({ env, platform }).map((d) => path.resolve(d).toLowerCase()));
+  return [...new Set(dirs)].filter((d) => !onPath.has(path.resolve(d).toLowerCase()));
+}
+
+function winExts(env) {
+  const exts = (getEnv(env, 'PATHEXT', 'win32') || '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => WIN_RUNNABLE.includes(e));
+  for (const e of WIN_RUNNABLE) if (!exts.includes(e)) exts.push(e);
+  return exts;
+}
+
+// Can we start this file? Windows has no execute bit (X_OK only means "exists"
+// there). App Execution Aliases (the 0-byte …\WindowsApps\*.exe links that
+// Store/MSIX apps install) are reparse points stat can't open (EACCES or
+// UNKNOWN), though CreateProcess runs them; lstat still sees them. A missing
+// file or a dangling symlink (ENOENT) is still a no.
+function runnable(file, platform, fsi = fs) {
+  try {
+    if (!fsi.statSync(file).isFile()) return false;
+    if (platform !== 'win32') fsi.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch (e) {
+    if (platform !== 'win32' || e.code === 'ENOENT' || e.code === 'ENOTDIR') return false;
+    try {
+      return !fsi.lstatSync(file).isDirectory();
+    } catch {
+      return false;
     }
   }
+}
+
+const hasWinExt = (file) => WIN_RUNNABLE.includes(path.extname(file).toLowerCase());
+const isPs1 = (file) => /\.ps1$/i.test(file);
+
+// `where.exe <bin>`: Windows' own lookup, for when ours comes up empty.
+export function whereExe(bin) {
+  try {
+    return execFileSync('where.exe', [bin], { encoding: 'utf8', timeout: 5000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+// Find an executable and return its full path, or null.
+// macOS/Linux: the bare name on PATH, or `<name>.exe` (a Windows install seen
+// from WSL). Windows: what cmd.exe would run, i.e. `<name><ext>` for each
+// PATHEXT extension in order (npm's copilot.cmd, WinGet's copilot.exe), never
+// the extensionless sh shim npm puts beside copilot.cmd; then the folders
+// installers use (knownDirs); then whatever `where.exe` finds; and last a
+// PowerShell-only `<name>.ps1`. Paths work too, with or without the extension.
+// `where` and `fs` are there so tests can play Windows.
+export function resolveBin(bin, { env = process.env, platform = process.platform, where = whereExe, cwd = process.cwd(), fs: fsi = fs } = {}) {
+  const ok = (f) => runnable(f, platform, fsi);
+  if (platform !== 'win32') {
+    const exts = ['', '.exe'];
+    if (bin.includes('/')) return exts.map((e) => bin + e).find(ok) ?? null;
+    for (const dir of pathDirs({ env, platform })) for (const ext of exts) if (ok(path.join(dir, bin + ext))) return path.join(dir, bin + ext);
+    return null;
+  }
+  const exts = hasWinExt(bin) || isPs1(bin) ? [''] : winExts(env);
+  if (bin.includes('/') || bin.includes('\\')) return [...exts, '.ps1'].map((e) => bin + e).find((f) => (hasWinExt(f) || isPs1(f)) && ok(f)) ?? null;
+  const dirs = [...pathDirs({ env, platform }), ...knownDirs({ env, platform })];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const file = path.join(dir, bin + ext);
+      if (ok(file)) return file;
+    }
+  }
+  // where.exe searches the current directory first; a copilot.cmd sitting in
+  // the repo we were pointed at shouldn't get to run.
+  const here = path.resolve(cwd).toLowerCase();
+  const found = where(bin).find((f) => hasWinExt(f) && path.dirname(path.resolve(f)).toLowerCase() !== here && ok(f));
+  if (found) return found;
+  if (isPs1(bin) || exts.length === 1) return null;
+  for (const dir of dirs) if (ok(path.join(dir, `${bin}.ps1`))) return path.join(dir, `${bin}.ps1`);
   return null;
 }
 
 export const onPath = (bin) => Boolean(resolveBin(bin));
+
+// Why an engine wasn't found, for the error message: each folder searched, every
+// file in them named like the engine (and whether it can be started), and what
+// `where.exe` says.
+export function explainMissing(bins, { env = process.env, platform = process.platform, where = whereExe } = {}) {
+  const dirs = pathDirs({ env, platform });
+  const extra = knownDirs({ env, platform });
+  const lines = [`PATH (${dirs.length} entries):`, ...dirs.map((d) => `    ${d}`)];
+  if (extra.length) lines.push('Also looked in:', ...extra.map((d) => `    ${d}`));
+  for (const bin of bins) {
+    const seen = [];
+    for (const dir of [...dirs, ...extra]) {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((n) => n.toLowerCase() === bin || n.toLowerCase().startsWith(`${bin}.`));
+      } catch {}
+      for (const n of names) {
+        const file = path.join(dir, n);
+        let why = runnable(file, platform) ? 'usable' : 'skipped: not an executable file';
+        if (platform === 'win32' && !hasWinExt(n) && !isPs1(n)) why = "skipped: no .exe/.cmd extension, so Windows can't start it";
+        seen.push(`    ${file}  (${why})`);
+      }
+    }
+    lines.push(`${bin}: ${seen.length ? 'files by that name:' : 'no file by that name in those folders'}`, ...seen);
+    if (platform === 'win32') {
+      const found = where(bin);
+      lines.push(`    where.exe ${bin}: ${found.length ? found.join(', ') : 'nothing'}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// Engines chosen with --cli: names (claude, copilot), optionally with the file
+// to use (`copilot=C:\tools\copilot.exe`), or just the path to the CLI itself.
+export function parseCliList(value) {
+  return String(value)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const eq = item.indexOf('=');
+      if (eq > 0) return { id: item.slice(0, eq).trim().toLowerCase(), path: item.slice(eq + 1).trim() };
+      if (/[\\/]/.test(item)) return { id: path.basename(item.replace(/\\/g, '/')).replace(/\.[^.]*$/, '').toLowerCase(), path: item };
+      return { id: item.toLowerCase() };
+    });
+}
 
 // Batch files (.cmd/.bat) can only run through cmd.exe, which re-parses its whole
 // command line: paths with spaces break and characters like & | < > % in an
@@ -123,8 +265,23 @@ function cmdEscapeArg(arg, twice) {
   return twice ? a.replace(CMD_META, '^$1') : a;
 }
 
-export function spawnSpec(file, args, { env = process.env } = {}) {
+// npm's .cmd shims only run `node <script>` (or an .exe), so those skip cmd.exe
+// and start the target directly: no escaping can carry a newline (a multi-line
+// task or Claude's --append-system-prompt) through cmd, nor lift its 8191-char
+// limit. PowerShell-only .ps1 launchers go through powershell.exe -File.
+export function spawnSpec(file, args, { env = process.env, node = process.execPath } = {}) {
+  if (isPs1(file)) {
+    const ps = env.SystemRoot ? path.win32.join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : 'powershell.exe';
+    return { file: ps, args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file, ...args] };
+  }
   if (!/\.(cmd|bat)$/i.test(file)) return { file, args };
+  const shim = npmShimTarget(file);
+  if (shim?.node) {
+    // Like the shim: a node.exe beside it wins (npm's own folder), else ours.
+    const local = path.join(path.dirname(file), 'node.exe');
+    return { file: fs.existsSync(local) ? local : node, args: [shim.target, ...args] };
+  }
+  if (shim) return { file: shim.target, args };
   let twice = false;
   try {
     twice = /%\*/.test(fs.readFileSync(file, 'utf8'));
@@ -133,6 +290,25 @@ export function spawnSpec(file, args, { env = process.env } = {}) {
   const cmdArgs = ['/d', '/s', '/c', `"${line}"`];
   // child_process needs windowsVerbatimArguments; node-pty takes the line as a string.
   return { file: env.ComSpec || env.comspec || 'cmd.exe', args: cmdArgs, commandLine: cmdArgs.join(' '), windowsVerbatimArguments: true };
+}
+
+// What an npm cmd-shim runs, or null: { target, node } where node says it's a
+// script for node. Its last line reads `… "%_prog%"  "%dp0%\node_modules\pkg\cli.js" %*`
+// with _prog set to node, or just `"%dp0%\node_modules\pkg\bin.exe"   %*`.
+export function npmShimTarget(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+  const m = text.match(/"%(?:~dp0|dp0%)\\([^"]+?)"\s+%\*/);
+  if (!m) return null;
+  const target = path.join(path.dirname(file), ...m[1].split('\\'));
+  if (!fs.existsSync(target)) return null;
+  if (/_prog=node"/i.test(text) && /\.[cm]?js$/i.test(m[1])) return { target, node: true };
+  if (/\.exe$/i.test(m[1]) && !/_prog/i.test(text)) return { target, node: false };
+  return null;
 }
 
 // Normalize hook payloads: Copilot sends toolName/toolArgs, Claude tool_name/tool_input.

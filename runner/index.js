@@ -14,7 +14,8 @@ import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { emptyXp } from '../shared/progression.js';
 import { lessonCounts, readPlaybooks, systemPrompt, trimPlaybooks, playbookDir } from './playbook.js';
-import { ADAPTERS, customAdapter, resolveBin, spawnSpec, normalizeHook } from './adapters.js';
+import { ADAPTERS, customAdapter, explainMissing, parseCliList, resolveBin, spawnSpec, normalizeHook } from './adapters.js';
+import { latestVersion, newer, npxCacheDir, npxCommand, retireDir, sweepRetired } from './update.js';
 import { detectProvider, loadBoard, PR_COMMANDS } from './providers.js';
 
 const run = promisify(execFile);
@@ -34,7 +35,8 @@ Options:
   --server <url>          office server (ws:// or wss://)
   --key <key>             your personal key from the invite
   --repo-dir <dir>        repo your agents work in (default: current directory)
-  --cli <list>            engines to offer: claude, copilot (default: whichever are installed)
+  --cli <list>            engines to offer: claude, copilot (default: whichever are installed);
+                          name=path uses that file, e.g. copilot=C:\\tools\\copilot.exe
   --private               don't lend your agents to coworkers
   --permission-mode <m>   Claude Code permission mode (default: auto)
   --copilot-args "<...>"  extra flags for Copilot agents, e.g. "--allow-all-tools"
@@ -78,39 +80,38 @@ if (opts.version) {
 // its own npx cache entry and starts the same command again, which fetches it.
 const RUNNER_PACKAGE = process.env.GUILD_RUNNER_PACKAGE || 'https://github.com/kevinamick/agent-guild/archive/HEAD.tar.gz';
 
-function newer(a, b) {
-  const pa = String(a).split('.').map(Number);
-  const pb = String(b).split('.').map(Number);
-  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
-  return false;
-}
-
 async function selfUpdate() {
-  const cacheDir = fileURLToPath(import.meta.url).match(/^(.*[\\/]_npx[\\/][^\\/]+)[\\/]/)?.[1];
+  const cacheDir = npxCacheDir(fileURLToPath(import.meta.url));
   const gh = RUNNER_PACKAGE.match(/github\.com\/([^/]+)\/([^/]+)\/archive\/(.+)\.tar\.gz$/);
   if (!cacheDir || !gh || process.env.GUILD_NO_UPDATE) return false;
+  sweepRetired(cacheDir);
   let latest;
   try {
-    const res = await fetch(`https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}/package.json`, { signal: AbortSignal.timeout(4000) });
-    latest = (await res.json()).version;
-  } catch {
-    return false; // offline or GitHub unreachable: run what we have
+    latest = await latestVersion(`https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}/package.json`);
+  } catch (e) {
+    // Offline or GitHub unreachable: run what we have, but say so, since a copy
+    // that never updates is otherwise invisible.
+    console.log(`Couldn't check for a newer Agent Guild runner (${e.message}); running ${VERSION} from ${cacheDir}.`);
+    return false;
   }
   if (!latest || !newer(latest, VERSION)) return false;
   console.log(`Updating the Agent Guild runner ${VERSION} → ${latest}…`);
   try {
-    fs.rmSync(cacheDir, { recursive: true, force: true });
+    retireDir(cacheDir);
   } catch (e) {
-    console.log(`Couldn't clear the old copy (${e.message}); continuing with ${VERSION}.`);
+    console.log(`Couldn't clear the old copy (${e.message}); continuing with ${VERSION}. Delete ${cacheDir} to update.`);
     return false;
   }
   // GUILD_NO_UPDATE stops a loop if GitHub's tarball lags behind its raw file for a minute.
-  const child = spawn('npx', ['-y', '--package', RUNNER_PACKAGE, 'agent-guild', ...process.argv.slice(2)], {
-    stdio: 'inherit',
-    env: { ...process.env, GUILD_NO_UPDATE: '1' },
-    shell: process.platform === 'win32',
+  const { file, args, shell } = npxCommand(['-y', '--package', RUNNER_PACKAGE, 'agent-guild', ...process.argv.slice(2)]);
+  const child = spawn(file, args, { stdio: 'inherit', env: { ...process.env, GUILD_NO_UPDATE: '1' }, shell });
+  child.on('error', (e) => {
+    console.error(`Couldn't restart the runner (${e.message}). Run the same command again.`);
+    process.exit(1);
   });
-  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
+  // Windows already sends Ctrl+C to every process in the console, and kill() there
+  // is TerminateProcess, which would skip the new runner's clean shutdown.
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.platform !== 'win32' && child.kill(sig));
   child.on('exit', (code) => process.exit(code ?? 0));
   return true;
 }
@@ -171,15 +172,28 @@ try {
   process.exit(1);
 }
 
+// --cli picks engines and can say where each lives (copilot=C:\tools\copilot.exe).
+const wanted = opts.cli ? parseCliList(opts.cli) : Object.keys(ADAPTERS).map((id) => ({ id }));
+for (const w of wanted) if (!ADAPTERS[w.id]) console.error(`Unknown engine "${w.id}" in --cli; use ${Object.keys(ADAPTERS).join(', ')}.`);
 const ENGINES = opts['agent-cmd']
   ? { custom: customAdapter(path.resolve(opts['agent-cmd'])) }
   : Object.fromEntries(
-      (opts.cli ? opts.cli.split(',').map((c) => c.trim()) : Object.keys(ADAPTERS))
-        .map((c) => [c, ADAPTERS[c] && { ...ADAPTERS[c], path: resolveBin(ADAPTERS[c].bin) }])
-        .filter(([, a]) => a?.path),
+      wanted
+        .filter((w) => ADAPTERS[w.id])
+        .map((w) => [w.id, { ...ADAPTERS[w.id], path: resolveBin(w.path || ADAPTERS[w.id].bin) }])
+        .filter(([, a]) => a.path),
     );
 if (!Object.keys(ENGINES).length) {
-  console.error('No agent CLI found. Install Claude Code (`claude`) or GitHub Copilot CLI (`npm i -g @github/copilot`), or pass --cli.');
+  const tried = wanted.filter((w) => ADAPTERS[w.id]);
+  const given = tried.filter((w) => w.path);
+  console.error(`No agent CLI found. Install Claude Code (\`claude\`) or GitHub Copilot CLI (\`npm i -g @github/copilot\`), or pass --cli.`);
+  if (given.length) console.error(given.map((w) => `  ${w.path}: not found${process.platform === 'win32' ? ', or not a file Windows can start (.exe/.cmd)' : ' or not executable'}`).join('\n'));
+  console.error(`\nAgent Guild runner ${VERSION}, Node ${process.version}, ${process.platform} ${process.arch}, started from ${fileURLToPath(import.meta.url)}`);
+  console.error(explainMissing(tried.filter((w) => !w.path).map((w) => ADAPTERS[w.id].bin)));
+  console.error(
+    '\nIf `copilot` or `claude` works in this terminal, pass its full path, e.g. --cli copilot="C:\\path\\to\\copilot.exe"' +
+      ' (in PowerShell, `(Get-Command copilot).Source` prints it). If you just installed it, open a new terminal first.',
+  );
   process.exit(1);
 }
 const HOOK_SECRET = crypto.randomBytes(12).toString('hex');
