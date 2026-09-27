@@ -359,7 +359,7 @@ function onHook(agentId, event, body) {
 function hookReply(agentId, event) {
   const s = sessions.get(agentId);
   const adapter = s && ENGINES[s.engine];
-  if (event !== 'UserPromptSubmit' || !adapter?.hookReply) return '';
+  if (event !== 'UserPromptSubmit' || !adapter?.hookReply) return '{}';
   return adapter.hookReply(lessonNote(s.meta?.kind, agentDir(agentId)));
 }
 
@@ -372,7 +372,9 @@ const hookServer = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
-    if (kind !== 'hook' || secret !== HOOK_SECRET) return res.end('ok');
+    // Typed, so PowerShell hands the reply over as text rather than bytes.
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    if (kind !== 'hook' || secret !== HOOK_SECRET) return res.end('{}');
     try {
       onHook(agentId, event, normalizeHook(body ? JSON.parse(body) : {}));
     } catch (e) {

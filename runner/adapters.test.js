@@ -92,7 +92,8 @@ test('Copilot hooks carry both bash and PowerShell commands', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(dir, 'copilot-plugin', 'hooks.json'), 'utf8')).hooks;
   for (const [event, entry] of Object.entries(hooks)) {
     assert.match(entry[0].bash, /curl .*127\.0\.0\.1/);
-    assert.match(entry[0].powershell, /Invoke-(RestMethod|WebRequest -UseBasicParsing) -Uri 'http:\/\/127\.0\.0\.1/);
+    assert.match(entry[0].powershell, /Invoke-WebRequest -UseBasicParsing -Uri 'http:\/\/127\.0\.0\.1/);
+    assert.match(entry[0].powershell, /DefaultWebProxy = \$null/);
     // Only the prompt hook prints the runner's answer (the lesson note) back to Copilot.
     assert.equal(!/>\/dev\/null 2>&1/.test(entry[0].bash), event === 'userPromptSubmitted');
   }
@@ -101,7 +102,7 @@ test('Copilot hooks carry both bash and PowerShell commands', () => {
   assert.equal(hooks.permissionRequest, undefined);
   assert.match(hooks.notification[0].bash, /\/Notification /);
   assert.match(hooks.postToolUse[0].powershell, /\/PostToolUse'/);
-  assert.match(hooks.userPromptSubmitted[0].powershell, /\)\.Content/);
+  assert.match(hooks.userPromptSubmitted[0].powershell, /\)\.Content; if \(\$r -is \[byte\[\]\]\)/);
   assert.deepEqual(JSON.parse(ADAPTERS.copilot.hookReply('note')), { additionalContext: 'note' });
 });
 

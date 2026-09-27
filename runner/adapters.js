@@ -57,10 +57,16 @@ export const ADAPTERS = {
         agentStop: 'Stop', notification: 'Notification',
       };
       // Copilot runs `bash` on macOS/Linux and `powershell` on Windows.
-      const psCommand = (event, reply) =>
-        reply
-          ? `$b = [Console]::In.ReadToEnd(); try { (Invoke-WebRequest -UseBasicParsing -Uri '${hookUrl}/${event}' -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 2).Content } catch {}`
-          : `$b = [Console]::In.ReadToEnd(); try { Invoke-RestMethod -Uri '${hookUrl}/${event}' -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 2 | Out-Null } catch {}`;
+      // No proxy for a call to 127.0.0.1: Windows PowerShell's proxy auto-detection alone
+      // can outlast the timeout on a corporate network. A reply can come back as bytes,
+      // which would reach Copilot as a column of numbers, so it's decoded to text.
+      const psCommand = (event, reply) => {
+        const call = `Invoke-WebRequest -UseBasicParsing -Uri '${hookUrl}/${event}' -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 4`;
+        const head = `$b = [Console]::In.ReadToEnd(); [System.Net.WebRequest]::DefaultWebProxy = $null;`;
+        return reply
+          ? `${head} try { $r = (${call}).Content; if ($r -is [byte[]]) { $r = [System.Text.Encoding]::UTF8.GetString($r) }; $r } catch {}`
+          : `${head} try { ${call} | Out-Null } catch {}`;
+      };
       const hooks = Object.fromEntries(
         Object.entries(map).map(([ev, ours]) => {
           const reply = ours === 'UserPromptSubmit';
