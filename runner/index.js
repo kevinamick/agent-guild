@@ -383,6 +383,7 @@ async function spawnAgent({ agent, task, worktree, cols, rows, deskId, meta, cli
   const s = {
     term, cwd, worktree: wt, turn: null, buf: '', timer: null, screen: '', trustAsked: false,
     scrollback: '', deskId, meta, engine, status: task ? 'starting' : 'ready', activity: '',
+    cols: cols || 120, rows: rows || 34,
   };
   sessions.set(agent.id, s);
   log(`▶ ${agent.name} (${adapter.label}) started in ${cwd}${task ? ` for ${task.requestedBy}: ${task.text.split('\n')[0].slice(0, 80)}` : ''}`);
@@ -457,9 +458,16 @@ async function onMessage(msg) {
       return killAgent(msg.agentId);
     case 'input':
       return sessions.get(msg.agentId)?.term.write(msg.data);
-    case 'resize':
-      if (msg.cols > 10 && msg.rows > 4) sessions.get(msg.agentId)?.term.resize(msg.cols, msg.rows);
+    case 'resize': {
+      const s = sessions.get(msg.agentId);
+      if (!s || !(msg.cols > 10 && msg.rows > 4)) return;
+      s.term.resize(msg.cols, msg.rows);
+      s.cols = msg.cols;
+      s.rows = msg.rows;
+      // The office mirrors this size, so every viewer (and the laptop) wraps lines like the real terminal.
+      send({ t: 'size', agentId: msg.agentId, cols: s.cols, rows: s.rows });
       return;
+    }
     case 'prompt':
       if (sessions.get(msg.agentId) && msg.meta) sessions.get(msg.agentId).meta = msg.meta;
       return promptAgent(msg.agentId, msg.text);
@@ -509,13 +517,21 @@ function useOffice(id, name) {
   log(`office: ${name}; agents live in ${AGENTS_DIR}`);
 }
 
+// Terminals on Windows run through ConPTY, which repaints wrapped lines its own
+// way; viewers' xterm.js needs to know (its `windowsPty` option) to draw them right.
+function ptyInfo() {
+  if (process.platform !== 'win32') return { platform: process.platform };
+  return { platform: 'win32', backend: 'conpty', buildNumber: Number(os.release().split('.')[2]) || undefined };
+}
+
 // Sessions survive a dropped link; hand them back so their desks are kept.
 function sendHello(repo) {
   const live = [...sessions.entries()].map(([agentId, s]) => ({
     agentId, deskId: s.deskId, meta: s.meta, engine: s.engine, status: s.status, activity: s.activity, scrollback: s.scrollback,
+    cols: s.cols, rows: s.rows,
   }));
   const engines = Object.entries(ENGINES).map(([id, a]) => ({ id, label: a.label }));
-  ws.send(JSON.stringify({ t: 'hello', repo, provider: provider?.type || null, lend: !opts.private, engines, agents: loadLocalAgents(), sessions: live }));
+  ws.send(JSON.stringify({ t: 'hello', repo, provider: provider?.type || null, lend: !opts.private, engines, pty: ptyInfo(), agents: loadLocalAgents(), sessions: live }));
 }
 
 async function connect(repo, attempt = 0) {

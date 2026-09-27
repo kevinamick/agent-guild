@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { useGame, send, onPty, openModal, closeModal } from '../net.js';
+import { useGame, send, onPty, onPtySize, openModal, closeModal } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { LevelBadge, SkillChips, EngineChip } from './Hud.jsx';
 import { SKILL_INFO } from '../../../shared/progression.js';
@@ -13,7 +13,11 @@ export function TerminalModal({ agentId }) {
   const players = useGame((s) => s.players);
 
   useEffect(() => {
+    // On Windows the agent's terminal is ConPTY, which repaints wrapped lines its
+    // own way; xterm.js has a compatibility mode for exactly that.
+    const pty = useGame.getState().agents[agentId]?.pty;
     const term = new XTerm({
+      ...(pty?.platform === 'win32' ? { windowsPty: { backend: 'conpty', buildNumber: pty.buildNumber } } : {}),
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       fontSize: 13,
       cursorBlink: true,
@@ -30,6 +34,10 @@ export function TerminalModal({ agentId }) {
       } catch {}
     };
     requestAnimationFrame(resize);
+    // Someone else resized the shared terminal: match it, or lines would wrap differently here.
+    const offSize = onPtySize(agentId, (cols, rows) => {
+      if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
+    });
     const off = onPty(agentId, (data, reset) => {
       if (reset) term.reset();
       term.write(data);
@@ -49,6 +57,7 @@ export function TerminalModal({ agentId }) {
     return () => {
       window.removeEventListener('resize', resize);
       off();
+      offSize();
       send({ t: 'unsub', agentId });
       term.dispose();
     };

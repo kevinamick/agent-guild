@@ -119,7 +119,7 @@ kbd {
 .modal-title { font-size: 17px; font-weight: 900; }
 .modal-body { padding: 14px; overflow: auto; }
 .modal-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 2px solid var(--line); background: #fff7e8; flex-wrap: wrap; }
-.terminal-modal { width: min(1060px, 100%); height: min(760px, calc(100vh - 32px)); }
+.terminal-modal { width: min(1400px, 100%); height: min(860px, calc(100vh - 32px)); }
 .term-host { flex: 1; background: #1b1d2e; padding: 8px 4px 4px 10px; min-height: 0; }
 .kind-tag { font-size: 11px; font-weight: 800; padding: 1px 8px; border-radius: 99px; border: 1.5px solid var(--line); }
 .field-label { display: block; font-weight: 900; font-size: 13px; margin: 12px 0 6px; }

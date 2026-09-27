@@ -2,8 +2,9 @@
 // onto a canvas used as its laptop screen.
 import * as THREE from 'three';
 
+// Same shape as the laptop's screen (0.64 × 0.42), so text isn't squeezed.
 const W = 1024;
-const H = 640;
+const H = Math.round((W * 0.42) / 0.64);
 const BG = '#1b1d2e';
 const FG = '#d6deeb';
 const FONT = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';

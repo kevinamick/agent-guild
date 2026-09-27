@@ -151,6 +151,7 @@ function createOffice(officeId, officeName, dataDir) {
       lessons: l?.lessons ?? p.lessons ?? {},
       spawnedAt: l?.spawnedAt ?? null,
       engine: l?.engine ?? p.lastEngine ?? null,
+    pty: runner?.pty || null,
     };
   }
 
@@ -192,6 +193,10 @@ function createOffice(officeId, officeName, dataDir) {
 
   function playerByName(name) {
     return [...players.values()].find((p) => p.name.toLowerCase() === name.toLowerCase());
+  }
+
+  function windowsPtyOf(runner) {
+    return runner?.pty?.platform === 'win32' ? { backend: 'conpty', buildNumber: runner.pty.buildNumber } : undefined;
   }
 
   function firstRunner() {
@@ -308,7 +313,9 @@ function createOffice(officeId, officeName, dataDir) {
       activity: task?.text ? 'reading the brief' : 'booting up',
       task: { kind, title: task?.title || null, text: task?.text || '', requestedBy: player.name, borrowed, ref: task?.ref || null },
       scrollback: '',
-      screen: (live.get(profile.id)?.screen?.dispose(), createScreen(120, 34)),
+      screen: (live.get(profile.id)?.screen?.dispose(), createScreen(120, 34, windowsPtyOf(runner))),
+      cols: 120,
+      rows: 34,
       viewers: new Set(),
       kudosBy: new Set(),
       turnId: 0,
@@ -460,6 +467,7 @@ function createOffice(officeId, officeName, dataDir) {
         const l = live.get(msg.agentId);
         if (!l) return;
         l.viewers.add(player.id);
+        if (l.cols) send(player.ws, { t: 'pty-size', agentId: msg.agentId, cols: l.cols, rows: l.rows });
         send(player.ws, { t: 'scrollback', agentId: msg.agentId, data: l.scrollback });
         break;
       }
@@ -576,6 +584,7 @@ function createOffice(officeId, officeName, dataDir) {
     runner.repo = msg.repo || null;
     runner.provider = msg.provider === 'ado' || msg.provider === 'github' ? msg.provider : null;
     runner.engines = Array.isArray(msg.engines) ? msg.engines.slice(0, 8) : [];
+    runner.pty = cleanPtyInfo(msg.pty);
     runner.lend = msg.lend !== false;
     // A runner remembers its agents locally; merge so XP survives either side restarting.
     for (const a of msg.agents || []) {
@@ -606,7 +615,7 @@ function createOffice(officeId, officeName, dataDir) {
           continue;
         }
         l = {
-          deskId: desk.id, task: sess.meta || { kind: 'general' }, scrollback: '', screen: createScreen(120, 34), viewers: new Set(), kudosBy: new Set(),
+          deskId: desk.id, task: sess.meta || { kind: 'general' }, scrollback: '', screen: createScreen(sess.cols || 120, sess.rows || 34, windowsPtyOf(runner)), cols: sess.cols || 120, rows: sess.rows || 34, viewers: new Set(), kudosBy: new Set(),
           turnId: 0, spawnedAt: 0, lessons: profiles.get(sess.agentId).lessons || {},
         };
         live.set(sess.agentId, l);
@@ -614,6 +623,11 @@ function createOffice(officeId, officeName, dataDir) {
       }
       l.runnerId = runner.id;
       l.offlineSince = null;
+      if (sess.cols && sess.rows) {
+        l.cols = sess.cols;
+        l.rows = sess.rows;
+        l.screen?.resize(sess.cols, sess.rows);
+      }
       l.engine = sess.engine || l.engine || null;
       l.status = sess.status || 'ready';
       l.activity = sess.activity || '';
@@ -681,7 +695,16 @@ function createOffice(officeId, officeName, dataDir) {
         }
         pushState();
         break;
-      case 'turn': {
+      case 'size': {
+        // The PTY's real size: the laptop copy and every viewer follow it so lines wrap the same.
+        l.cols = msg.cols | 0;
+        l.rows = msg.rows | 0;
+        l.screen?.resize(l.cols, l.rows);
+        const data = JSON.stringify({ t: 'pty-size', agentId: msg.agentId, cols: l.cols, rows: l.rows });
+        for (const pid of l.viewers) players.get(pid)?.ws.send(data);
+        break;
+      }
+            case 'turn': {
         const p = profiles.get(msg.agentId);
         const stats = msg.stats || {};
         const { amount, reasons } = turnXp(stats);
@@ -869,6 +892,14 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4 * 1024 * 10
 
 function send(ws, msg) {
   if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+}
+
+// What a runner says about its terminals (platform, Windows ConPTY build), kept to known shapes.
+function cleanPtyInfo(p) {
+  if (!p || typeof p !== 'object') return null;
+  const platform = String(p.platform || '').slice(0, 16);
+  const buildNumber = Number.isInteger(p.buildNumber) && p.buildNumber > 0 && p.buildNumber < 1e6 ? p.buildNumber : undefined;
+  return platform === 'win32' ? { platform, backend: 'conpty', buildNumber } : { platform };
 }
 
 // The first office keeps the original data layout; others live under data/offices/<id>.

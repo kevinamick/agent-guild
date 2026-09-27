@@ -121,6 +121,14 @@ async function main() {
   const lateFull = await late.wait((m) => m.t === 'screen' && m.agentId === agentId && m.full, 'full screen for a late joiner');
   check(lateFull.n > 0 && /fake agent/.test(screenText([lateFull])), 'someone walking in later gets the whole screen at once');
   late.ws.close();
+  // A viewer resizes the shared terminal; the runner confirms the real size, viewers
+  // follow it, and the laptop copy re-lays itself out at that width.
+  kevin.send({ t: 'sub', agentId });
+  kevin.send({ t: 'resize', agentId, cols: 100, rows: 30 });
+  const size = await kevin.wait((m) => m.t === 'pty-size' && m.agentId === agentId && m.cols === 100, 'pty size from the runner');
+  const relaid = await kevin.wait((m) => m.t === 'screen' && m.agentId === agentId && m.cols === 100 && m.n === 30, 'screen at the new size');
+  check(size.rows === 30 && relaid, "the terminal's real size reaches every viewer and the laptop copy");
+  kevin.send({ t: 'unsub', agentId });
 
   const alice = player(KEYS.Alice);
   await alice.ready;

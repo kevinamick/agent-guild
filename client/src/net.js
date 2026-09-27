@@ -101,6 +101,14 @@ export function rtcConfig() {
   return { iceServers: useGame.getState().rtc?.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }] };
 }
 
+// The real terminal's size, which every viewer adopts so lines wrap identically.
+const sizeListeners = new Map(); // agentId -> Set<fn(cols, rows)>
+export function onPtySize(agentId, fn) {
+  if (!sizeListeners.has(agentId)) sizeListeners.set(agentId, new Set());
+  sizeListeners.get(agentId).add(fn);
+  return () => sizeListeners.get(agentId)?.delete(fn);
+}
+
 export function onPty(agentId, fn) {
   if (!ptyListeners.has(agentId)) ptyListeners.set(agentId, new Set());
   ptyListeners.get(agentId).add(fn);
@@ -192,6 +200,9 @@ function handle(msg) {
       break;
     case 'pty':
       ptyListeners.get(msg.agentId)?.forEach((fn) => fn(msg.data));
+      break;
+    case 'pty-size':
+      sizeListeners.get(msg.agentId)?.forEach((fn) => fn(msg.cols, msg.rows));
       break;
     case 'scrollback':
       ptyListeners.get(msg.agentId)?.forEach((fn) => fn(msg.data, true));

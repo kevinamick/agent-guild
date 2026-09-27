@@ -48,3 +48,15 @@ test('the 256-colour palette', () => {
   assert.equal(paletteColor(231), '#ffffff');
   assert.equal(paletteColor(232), '#080808');
 });
+
+test('a Windows (ConPTY) screen takes the compatibility option and still resizes', async () => {
+  const s = createScreen(40, 5, { backend: 'conpty', buildNumber: 22631 });
+  s.write('C:\\> copilot');
+  await settle();
+  s.resize(100, 30);
+  await settle();
+  const c = s.changes();
+  assert.equal(c.cols, 100);
+  assert.equal(c.n, 30);
+  assert.deepEqual(s.snapshot()[0], [['C:\\> copilot', null, null]]);
+});

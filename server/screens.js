@@ -50,8 +50,10 @@ function rowRuns(line, cols, cell) {
   return runs;
 }
 
-export function createScreen(cols = 120, rows = 34) {
-  const term = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true });
+// `windowsPty` ({ backend: 'conpty', buildNumber }) when the agent runs on Windows,
+// so wrapped lines are interpreted the way ConPTY paints them.
+export function createScreen(cols = 120, rows = 34, windowsPty) {
+  const term = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true, ...(windowsPty ? { windowsPty } : {}) });
   let dirty = false;
   let sent = []; // JSON of each row as last sent
   const markDirty = () => (dirty = true);
