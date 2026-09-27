@@ -44,3 +44,43 @@ test('PR bonus commands match both hosts', () => {
   assert.ok(PR_COMMANDS.reviewed.test('az repos pr set-vote --id 7 --vote approve'));
   assert.ok(PR_COMMANDS.opened.test('gh pr create --fill'));
 });
+
+import { azAccessToken, signInMessage } from './providers.js';
+
+test('az token: missing az, Windows az.cmd, failures and success', async () => {
+  assert.match((await azAccessToken({ resolve: () => null })).problem, /isn't on the runner's PATH/);
+
+  let called;
+  const ok = await azAccessToken({
+    resolve: () => 'C:\\Program Files\\Azure CLI\\wbin\\az.cmd',
+    exec: async (file, args) => ((called = { file, args }), { stdout: 'tok123\n' }),
+  });
+  assert.equal(ok.token, 'tok123');
+  assert.match(called.file, /cmd(\.exe)?$/i, 'az.cmd must go through cmd.exe on Windows');
+  assert.ok(called.args.includes('C:\\Program Files\\Azure CLI\\wbin\\az.cmd') && called.args.includes('get-access-token'));
+
+  const failed = await azAccessToken({
+    resolve: () => '/usr/bin/az',
+    exec: async () => {
+      throw Object.assign(new Error('exit 1'), { stderr: "\nERROR: Please run 'az login' to setup account.\n" });
+    },
+  });
+  assert.match(failed.problem, /Please run 'az login'/);
+
+  // Signed in, but Azure DevOps needs its own consent: surface az's exact command.
+  const consent = await azAccessToken({
+    resolve: () => '/usr/bin/az',
+    exec: async () => {
+      throw Object.assign(new Error('exit 1'), {
+        stderr: 'ERROR: AADSTS9002313: Invalid request.\nInteractive authentication is needed. Please run:\naz login --scope 499b84ac-1321-427f-aa17-267ca6975798/.default\n',
+      });
+    },
+  });
+  assert.match(consent.problem, /Run: az login --scope 499b84ac-1321-427f-aa17-267ca6975798\/\.default$/);
+});
+
+test('sign-in messages say which credential was rejected', () => {
+  assert.match(signInMessage('pat', 'contoso'), /rejected AZURE_DEVOPS_EXT_PAT/);
+  assert.match(signInMessage('az', 'contoso'), /rejected the token from your `az login`.*--tenant/);
+  assert.match(signInMessage(null, 'contoso', "`az` isn't on PATH"), /needs sign-in.*az login.*isn't on PATH/);
+});

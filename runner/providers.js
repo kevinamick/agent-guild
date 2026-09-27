@@ -3,6 +3,7 @@
 // doesn't care whether items came from GitHub or Azure DevOps.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { resolveBin, spawnSpec } from './adapters.js';
 
 const run = promisify(execFile);
 const ADO_RESOURCE = '499b84ac-1321-427f-aa17-267ca6975798'; // Azure DevOps, for `az account get-access-token`
@@ -47,28 +48,58 @@ async function githubBoard(kind, cwd) {
 
 // A PAT (the same variable the az devops extension reads) beats an Entra token
 // from `az login`; with neither, public projects still work anonymously.
-let azToken = { value: null, until: 0 };
+// Ask the Azure CLI for an Azure DevOps token. On Windows `az` is `az.cmd`, which
+// can't be started directly, so resolve it like the agent CLIs (spawnSpec runs
+// batch files through cmd.exe). Returns { token } or { problem } saying why not.
+export async function azAccessToken({ exec = run, resolve = resolveBin } = {}) {
+  const az = resolve('az');
+  if (!az) return { problem: "the Azure CLI (`az`) isn't on the runner's PATH" };
+  const { file, args } = spawnSpec(az, ['account', 'get-access-token', '--resource', ADO_RESOURCE, '--query', 'accessToken', '-o', 'tsv']);
+  try {
+    const { stdout } = await exec(file, args, { timeout: 30000, windowsHide: true });
+    const token = String(stdout).trim();
+    return token ? { token } : { problem: '`az account get-access-token` returned no token' };
+  } catch (e) {
+    const out = String(e.stderr || e.message || '');
+    // az often ends with the exact fix, e.g. "Please run: az login --scope <resource>/.default".
+    const fix = out.match(/^\s*(az login[^\r\n]*)/m)?.[1];
+    if (fix) return { problem: `\`az\` needs you to sign in again for Azure DevOps. Run: ${fix.trim()}` };
+    const detail = out.split('\n').map((l) => l.trim()).find(Boolean) || 'it failed';
+    return { problem: `\`az account get-access-token\` failed: ${detail.slice(0, 220)}` };
+  }
+}
+
+// `az` is slow to start, so a token is reused for 30 minutes; a failure is only
+// remembered for 30 seconds so signing in with `az login` takes effect quickly.
+let azToken = { value: null, until: 0, problem: null };
 
 async function adoAuth() {
   const pat = process.env.AZURE_DEVOPS_EXT_PAT || process.env.GUILD_ADO_PAT;
-  if (pat) return { authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}` };
-  // `az` is slow to start, so remember the token (or its absence) for a while.
+  if (pat) return { headers: { authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}` }, via: 'pat' };
   if (Date.now() > azToken.until) {
-    azToken = { value: null, until: Date.now() + 5 * 60 * 1000 };
-    try {
-      const { stdout } = await run('az', ['account', 'get-access-token', '--resource', ADO_RESOURCE, '--query', 'accessToken', '-o', 'tsv'], { timeout: 20000 });
-      if (stdout.trim()) azToken = { value: stdout.trim(), until: Date.now() + 30 * 60 * 1000 };
-    } catch {}
+    const r = await azAccessToken();
+    azToken = r.token
+      ? { value: r.token, until: Date.now() + 30 * 60 * 1000, problem: null }
+      : { value: null, until: Date.now() + 30 * 1000, problem: r.problem };
   }
-  return azToken.value ? { authorization: `Bearer ${azToken.value}` } : {};
+  return azToken.value ? { headers: { authorization: `Bearer ${azToken.value}` }, via: 'az' } : { headers: {}, via: null };
 }
 
-async function adoFetch(url, init = {}) {
-  const res = await fetch(url, { ...init, headers: { accept: 'application/json', ...(init.headers || {}), ...(await adoAuth()) }, redirect: 'manual' });
+export function signInMessage(via, org, azProblem) {
+  if (via === 'pat') return `Azure DevOps rejected AZURE_DEVOPS_EXT_PAT for "${org}": check it hasn't expired and has Code (Read) and Work Items (Read) scopes for that organization.`;
+  if (via === 'az')
+    return `Azure DevOps rejected the token from your \`az login\` for "${org}": the signed-in account may not be a member of that organization, or it's in a different directory. Try \`az login --tenant <your org's tenant>\`, or set AZURE_DEVOPS_EXT_PAT instead.`;
+  return `Azure DevOps needs sign-in for "${org}": run \`az login\` on the runner's machine, or set AZURE_DEVOPS_EXT_PAT (a PAT with Code and Work Items read) and restart the runner.${azProblem ? ` (${azProblem})` : ''}`;
+}
+
+async function adoFetch(url, p, init = {}) {
+  const auth = await adoAuth();
+  const res = await fetch(url, { ...init, headers: { accept: 'application/json', ...(init.headers || {}), ...auth.headers }, redirect: 'manual' });
   const type = res.headers.get('content-type') || '';
   // Unauthenticated requests get a redirect or a 203 sign-in page instead of JSON.
   if (res.status === 401 || res.status === 403 || res.status === 203 || (res.status >= 300 && res.status < 400) || !type.includes('json')) {
-    throw new Error('Azure DevOps needs sign-in: set AZURE_DEVOPS_EXT_PAT (a PAT with Code and Work Items read) or run `az login`, then restart the runner.');
+    if (auth.via === 'az') azToken.until = 0; // ask az again next time
+    throw new Error(signInMessage(auth.via, p.org, azToken.problem));
   }
   if (!res.ok) throw new Error(`Azure DevOps answered ${res.status}: ${(await res.text()).slice(0, 160)}`);
   return res.json();
@@ -131,10 +162,10 @@ export function htmlToText(html) {
 
 async function adoBoard(kind, p) {
   if (kind === 'prs') {
-    const data = await adoFetch(`${base(p)}/_apis/git/repositories/${encodeURIComponent(p.repo)}/pullrequests?searchCriteria.status=all&$top=60&api-version=7.1`);
+    const data = await adoFetch(`${base(p)}/_apis/git/repositories/${encodeURIComponent(p.repo)}/pullrequests?searchCriteria.status=all&$top=60&api-version=7.1`, p);
     return (data.value || []).map((pr) => adoPrToItem(pr, p));
   }
-  const wiql = await adoFetch(`${base(p)}/_apis/wit/wiql?$top=60&api-version=7.1`, {
+  const wiql = await adoFetch(`${base(p)}/_apis/wit/wiql?$top=60&api-version=7.1`, p, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -144,7 +175,7 @@ async function adoBoard(kind, p) {
   const ids = (wiql.workItems || []).map((w) => w.id).slice(0, 60);
   if (!ids.length) return [];
   const fields = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.CreatedBy', 'System.CreatedDate', 'System.Description', 'System.Tags', 'Microsoft.VSTS.TCM.ReproSteps'];
-  const items = await adoFetch(`${base(p)}/_apis/wit/workitems?ids=${ids.join(',')}&fields=${fields.join(',')}&errorPolicy=omit&api-version=7.1`);
+  const items = await adoFetch(`${base(p)}/_apis/wit/workitems?ids=${ids.join(',')}&fields=${fields.join(',')}&errorPolicy=omit&api-version=7.1`, p);
   return (items.value || []).filter(Boolean).map((wi) => adoWorkItemToItem(wi, p));
 }
 
