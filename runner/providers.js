@@ -1,6 +1,7 @@
 // Where the team's code lives. The runner reads the boards from the repo's host
 // and hands the office one normalized shape (GitHub's field names), so the UI
 // doesn't care whether items came from GitHub or Azure DevOps.
+import fs from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveBin, spawnSpec } from './adapters.js';
@@ -293,3 +294,193 @@ export const PR_COMMANDS = {
   merged: /\bgh pr merge\b|\baz repos pr update\b[^\n]*--status\s+completed\b/,
   reviewed: /\bgh pr (review|comment)\b|\baz repos pr set-vote\b/,
 };
+
+// ---------------------------------------------------------------- PR outcomes
+// After an agent opens a PR the runner follows it: CI, the merge, and a revert later
+// on. Every host answers in one shape:
+// { state: OPEN|MERGED|CLOSED, ci: passed|failed|pending|none, title, base, mergedAt, mergeCommit }.
+
+const ghRef = (repo, number) => ({ host: 'github', repo, number, url: `https://github.com/${repo}/pull/${number}` });
+const adoRef = (p, number) => ({ host: 'ado', org: p.org, project: p.project, repo: p.repo, number, url: `${base(p)}/_git/${encodeURIComponent(p.repo)}/pullrequest/${number}` });
+
+export function prKey(ref) {
+  const where = ref.host === 'ado' ? [ref.org, ref.project, ref.repo].map(encodeURIComponent).join('/') : ref.repo;
+  return `${ref.host}:${where}#${ref.number}`.toLowerCase();
+}
+
+// The PR a create command's output names: gh prints its URL, `az repos pr create`
+// prints JSON with the id. Null when it names none (or says the PR already existed).
+export function parsePrRef(text, provider) {
+  const s = String(text || '');
+  if (/already exists/i.test(s)) return null;
+  let m = s.match(/https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/i);
+  if (m) return ghRef(m[1], Number(m[2]));
+  m = s.match(/https:\/\/(?:[^@/\s]+@)?dev\.azure\.com\/([^/\s"]+)\/([^/\s"]+)\/_git\/([^/\s"]+)\/pullrequest\/(\d+)/i);
+  m ||= s.match(/https:\/\/([^./\s"]+)\.visualstudio\.com\/(?:DefaultCollection\/)?([^/\s"]+)\/_git\/([^/\s"]+)\/pullrequest\/(\d+)/i);
+  if (m) return adoRef(ado(m[1], m[2], m[3]), Number(m[4]));
+  m = s.match(/"pullRequestId"\s*:\s*(\d+)/);
+  if (m && provider?.type === 'ado') return adoRef(provider, Number(m[1]));
+  return null;
+}
+
+// The branch a create command names (gh --head/-H, az --source-branch/-s), if any.
+export function prHeadFromCommand(cmd) {
+  const at = String(cmd).search(PR_COMMANDS.opened);
+  if (at < 0) return null;
+  const own = String(cmd).slice(at).split(/&&|\|\||;|\|/)[0];
+  const m = own.match(/\s(?:--head|-H|--source-branch|-s)(?:\s+|=)["']?([^\s"']+)/);
+  return m ? m[1].replace(/^refs\/heads\//, '') : null;
+}
+
+// One verdict from many checks: any failure fails, anything unfinished is pending.
+function combineChecks(states) {
+  if (!states.length) return 'none';
+  if (states.includes('failed')) return 'failed';
+  if (states.includes('pending')) return 'pending';
+  return 'passed';
+}
+
+// statusCheckRollup mixes check runs ({ status, conclusion }) and commit statuses ({ state }).
+export function ghCiStatus(rollup) {
+  const states = (rollup || []).map((c) => {
+    if (c.state && !c.status) return { SUCCESS: 'passed', PENDING: 'pending', EXPECTED: 'pending' }[c.state] || 'failed';
+    if (c.status !== 'COMPLETED') return 'pending';
+    return ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion) ? 'passed' : 'failed';
+  });
+  return combineChecks(states);
+}
+
+export function ghPrStatus(pr) {
+  return {
+    state: pr.state === 'MERGED' || pr.state === 'CLOSED' ? pr.state : 'OPEN',
+    ci: ghCiStatus(pr.statusCheckRollup),
+    title: pr.title || '',
+    base: pr.baseRefName || null,
+    mergedAt: pr.mergedAt || null,
+    mergeCommit: pr.mergeCommit?.oid || null,
+  };
+}
+
+const BUILD_POLICY = '0609b952-1397-4640-95ec-e00a01b2c241';
+
+// Build policies on the PR, plus status checks other services post (the newest per check).
+export function adoCiStatus(evaluations = [], statuses = []) {
+  const builds = evaluations.filter((e) => e.configuration?.type?.id === BUILD_POLICY || /build/i.test(e.configuration?.type?.displayName || ''));
+  const latest = new Map();
+  for (const st of statuses) {
+    const name = `${st.context?.genre || ''}/${st.context?.name || ''}`;
+    if (!latest.has(name) || (st.id || 0) > (latest.get(name).id || 0)) latest.set(name, st);
+  }
+  const states = [
+    ...builds.map((e) => ({ approved: 'passed', rejected: 'failed', broken: 'failed', queued: 'pending', running: 'pending' })[e.status]),
+    ...[...latest.values()].map((st) => ({ succeeded: 'passed', failed: 'failed', error: 'failed', pending: 'pending' })[st.state]),
+  ];
+  return combineChecks(states.filter(Boolean));
+}
+
+export function adoPrStatus(pr, evaluations, statuses) {
+  return {
+    state: { completed: 'MERGED', abandoned: 'CLOSED' }[pr.status] || 'OPEN',
+    ci: adoCiStatus(evaluations, statuses),
+    title: pr.title || '',
+    base: String(pr.targetRefName || '').replace(/^refs\/heads\//, '') || null,
+    mergedAt: pr.status === 'completed' ? pr.closedDate || null : null,
+    mergeCommit: pr.lastMergeCommit?.commitId || null,
+  };
+}
+
+// Whether a commit on the base branch reverts the PR: git's own message ("This
+// reverts commit <merge>"), a revert titled after the PR (`Revert "<title>"`, also as
+// Azure DevOps words it: `Revert "Merged PR 12: <title>"`), or GitHub's revert button
+// ("Reverts owner/repo#12"). A revert of the revert names something else, so it doesn't match.
+export function isRevertOf(message, pr) {
+  const text = String(message || '');
+  const sha = String(pr.mergeCommit || '').toLowerCase();
+  for (const m of text.matchAll(/This reverts commit ([0-9a-f]{7,40})/gi)) if (sha && sha.startsWith(m[1].toLowerCase())) return true;
+  const unmerged = (s) => s.replace(/^Merged PR \d+:\s*/, '').trim();
+  const first = unmerged(text.split('\n')[0]).replace(/\s+\(#\d+\)$/, '');
+  const reverted = first.match(/^Revert "(.*)"$/)?.[1];
+  if (reverted && pr.title && unmerged(reverted) === pr.title.trim()) return true;
+  return Boolean(pr.repo && pr.number && new RegExp(`\\bReverts ${pr.repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}#${pr.number}\\b`, 'i').test(text));
+}
+
+async function githubPrStatus(ref) {
+  const { stdout } = await run('gh', ['pr', 'view', String(ref.number), '--repo', ref.repo, '--json', 'state,title,baseRefName,mergedAt,mergeCommit,statusCheckRollup'], { maxBuffer: 16 * 1024 * 1024, timeout: 60000 });
+  return ghPrStatus(JSON.parse(stdout));
+}
+
+async function githubCommitsSince(ref, branch, since) {
+  const q = `repos/${ref.repo}/commits?sha=${encodeURIComponent(branch)}&since=${encodeURIComponent(since)}&per_page=100`;
+  const { stdout } = await run('gh', ['api', q], { maxBuffer: 16 * 1024 * 1024, timeout: 60000 });
+  return JSON.parse(stdout || '[]').map((c) => ({ sha: c.sha, message: c.commit?.message || '' }));
+}
+
+// The newest PR from a branch, preferring one still open.
+async function githubPrForBranch(p, branch) {
+  const { stdout } = await run('gh', ['pr', 'list', '--repo', p.repo, '--head', branch, '--state', 'all', '--limit', '5', '--json', 'number,state,createdAt'], { timeout: 60000 });
+  const list = JSON.parse(stdout || '[]').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const pr = list.find((x) => x.state === 'OPEN') || list[0];
+  return pr ? ghRef(p.repo, pr.number) : null;
+}
+
+const adoRepoApi = (p) => `${base(p)}/_apis/git/repositories/${encodeURIComponent(p.repo)}`;
+
+async function adoPrStatusOf(ref) {
+  const pr = await adoFetch(`${adoRepoApi(ref)}/pullrequests/${ref.number}?api-version=7.1`, ref);
+  const artifact = `vstfs:///CodeReview/CodeReviewId/${pr.repository?.project?.id}/${ref.number}`;
+  const [evaluations, statuses] = await Promise.all([
+    adoFetch(`${base(ref)}/_apis/policy/evaluations?artifactId=${encodeURIComponent(artifact)}&api-version=7.1-preview.1`, ref).then((r) => r.value || [], () => []),
+    adoFetch(`${adoRepoApi(ref)}/pullrequests/${ref.number}/statuses?api-version=7.1`, ref).then((r) => r.value || [], () => []),
+  ]);
+  return adoPrStatus(pr, evaluations, statuses);
+}
+
+async function adoCommitsSince(ref, branch, since) {
+  const q = `searchCriteria.itemVersion.version=${encodeURIComponent(branch)}&searchCriteria.fromDate=${encodeURIComponent(since)}&$top=100&api-version=7.1`;
+  const data = await adoFetch(`${adoRepoApi(ref)}/commits?${q}`, ref);
+  return (data.value || []).map((c) => ({ sha: c.commitId, message: c.comment || '' }));
+}
+
+async function adoPrForBranch(p, branch) {
+  const q = `searchCriteria.sourceRefName=${encodeURIComponent(`refs/heads/${branch}`)}&searchCriteria.status=all&$top=5&api-version=7.1`;
+  const list = (await adoFetch(`${adoRepoApi(p)}/pullrequests?${q}`, p)).value || [];
+  const pr = list.find((x) => x.status === 'active') || list[0];
+  return pr ? adoRef(p, pr.pullRequestId) : null;
+}
+
+// How the runner asks about PRs: { findByBranch(provider, branch), status(ref),
+// commitsSince(ref, branch, sinceIso) }. GUILD_FAKE_PRS swaps in a JSON file the
+// end-to-end test edits, so a PR can pass CI, merge and be reverted without GitHub.
+export function prHost(fakeFile = process.env.GUILD_FAKE_PRS) {
+  if (fakeFile) return fakePrHost(fakeFile);
+  return {
+    async findByBranch(p, branch) {
+      if (p?.type === 'github') return githubPrForBranch(p, branch);
+      if (p?.type === 'ado') return adoPrForBranch(p, branch);
+      return null;
+    },
+    status: (ref) => (ref.host === 'ado' ? adoPrStatusOf(ref) : githubPrStatus(ref)),
+    commitsSince: (ref, branch, since) => (ref.host === 'ado' ? adoCommitsSince(ref, branch, since) : githubCommitsSince(ref, branch, since)),
+  };
+}
+
+// The file: { branches: { "<branch>": "<PR url>" }, prs: { "<number>": { state, ci,
+// title, base, mergedAt, mergeCommit } }, commits: [{ sha, message }] }.
+function fakePrHost(file) {
+  const read = () => {
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return {};
+    }
+  };
+  return {
+    findByBranch: async (p, branch) => parsePrRef(read().branches?.[branch], p),
+    async status(ref) {
+      const pr = read().prs?.[ref.number];
+      if (!pr) throw new Error(`no fake PR #${ref.number}`);
+      return { state: 'OPEN', ci: 'none', title: `PR ${ref.number}`, base: 'main', mergedAt: null, mergeCommit: null, ...pr };
+    },
+    commitsSince: async () => read().commits || [],
+  };
+}

@@ -347,7 +347,7 @@ function Effects() {
         {f.kind === 'bounty' && <LevelRing position={[0, 0.1, 0]} color="#facc15" />}
         <Html position={[0, 2.9, 0]} center zIndexRange={[30, 0]} style={{ pointerEvents: 'none' }}>
           {f.kind === 'xp' ? (
-            <div className="fx-xp" style={{ color }}>+{f.amount} XP</div>
+            <div className="fx-xp" style={{ color }}>{f.amount < 0 ? `−${-f.amount}` : `+${f.amount}`} XP</div>
           ) : f.kind === 'bounty' ? (
             <div className="fx-levelup fx-bounty">
               <div className="fx-levelup-title">💰 BOUNTY!</div>

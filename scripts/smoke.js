@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Self-contained end-to-end test: starts a server and two runners (Kevin, Alice)
 // using scripts/fake-agent.js, drives them over the real protocol, restarts the
-// server mid-session, and checks that agents survive.
+// server mid-session, and checks that agents survive. PR outcomes run against a
+// fake GitHub: a JSON file (GUILD_FAKE_PRS) the test edits.
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +15,7 @@ const PORT = 4700 + Math.floor(Math.random() * 200);
 const SERVER = `ws://localhost:${PORT}`;
 const KEYS = { Kevin: 'ag_kevin_test_key', Alice: 'ag_alice_test_key' };
 const procs = [];
+const FAKE_PRS = path.join(TMP, 'fake-prs.json');
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 // The smoke repo has no remote, so the runners serve boards from this file instead
@@ -30,8 +32,8 @@ fs.mkdirSync(repo);
 execFileSync('git', ['init', '-q'], { cwd: repo });
 execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: repo });
 
-function start(args, name) {
-  const p = spawn('node', args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+function start(args, name, env = {}) {
+  const p = spawn('node', args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
   p.logs = '';
   p.stdout.on('data', (d) => (p.logs += d));
   p.stderr.on('data', (d) => (p.logs += d));
@@ -42,7 +44,8 @@ function start(args, name) {
 const startServer = () =>
   start(['server/index.js', '--port', String(PORT), '--data', path.join(TMP, 'data'), '--admin', 'Kevin', '--admin-key', KEYS.Kevin, '--seed', `Alice=${KEYS.Alice}`], 'server');
 const startRunner = (who) =>
-  start(['runner/index.js', '--server', SERVER, '--key', KEYS[who], '--repo-dir', repo, '--home', path.join(TMP, who), '--agent-cmd', path.join(ROOT, 'scripts/fake-agent.js')], who);
+  start(['runner/index.js', '--server', SERVER, '--key', KEYS[who], '--repo-dir', repo, '--home', path.join(TMP, who), '--agent-cmd', path.join(ROOT, 'scripts/fake-agent.js')], who,
+    { GUILD_FAKE_PRS: FAKE_PRS, GUILD_PR_POLL_MS: '300' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function serverUp() {
   for (let i = 0; i < 50; i++) {
@@ -77,21 +80,34 @@ function player(key) {
   return p;
 }
 
+async function until(fn, label, ms = 15000) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(100)) {
+    try {
+      if (fn()) return;
+    } catch {}
+  }
+  throw new Error(`timeout: ${label}`);
+}
+
+// The fake GitHub the runners ask about PRs (see prHost in runner/providers.js).
+const fake = { branches: {}, prs: {}, commits: [] };
+const setFake = (change) => {
+  change(fake);
+  fs.writeFileSync(FAKE_PRS, JSON.stringify(fake));
+};
+const trackedPrs = (agentId) => JSON.parse(fs.readFileSync(path.join(TMP, 'Kevin', 'offices', 'main', 'agents', agentId, 'prs.json'), 'utf8'));
+const isOutcome = (m, n, what) => m.t === 'event' && m.kind === 'xp' && m.reasons?.some((r) => r.startsWith(`PR #${n} ${what}`));
+const outcomeXp = (p, n, what) => p.wait((m) => isOutcome(m, n, what), `PR #${n} ${what}`);
+
 const check = (cond, label) => {
   if (!cond) throw new Error(`FAILED: ${label}`);
   console.log(`  ✓ ${label}`);
 };
 const agentIn = (p, id) => p.state.agents.find((a) => a.id === id);
-// Waits until a condition on the players' latest states holds.
-async function until(cond, label) {
-  for (let i = 0; i < 100; i++, await sleep(50)) if (cond()) return;
-  throw new Error(`timeout: ${label}`);
-}
-
 async function main() {
   let server = startServer();
   await serverUp();
-  startRunner('Kevin');
+  let kevinRunner = startRunner('Kevin');
   startRunner('Alice');
 
   const bad = player('ag_nope');
@@ -374,6 +390,47 @@ async function main() {
   kevin.send({ t: 'dismiss', agentId: hunterId });
   await until(() => !agentIn(kevin, hunterId).deskId, 'hunter home');
   await sleep(400); // agent profiles are saved a moment after a change
+  // --- PR outcomes: the PR gh printed is followed, and CI, merge and revert each pay once
+  setFake((f) => (f.prs[12] = { title: 'Fix the login redirect', state: 'OPEN', ci: 'pending' }));
+  kevin.send({ t: 'hire', deskId: 11, agentId: null, name: 'Otto', task: { text: 'fix issue #12 and open a pr https://github.com/guild/smoke/pull/12', kind: 'issue' }, worktree: false });
+  const otto = (await kevin.wait((m) => m.t === 'state' && m.state.agents.some((a) => a.name === 'Otto'), 'Otto hired')).state.agents.find((a) => a.name === 'Otto').id;
+  await kevin.wait((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === otto, "Otto's turn XP", 20000);
+  await until(() => trackedPrs(otto).some((r) => r.key === 'github:guild/smoke#12'), 'PR #12 followed');
+  check(trackedPrs(otto)[0].skill === 'issue', "the PR in gh's output is followed for the agent that opened it, in the skill of that work (issue)");
+  await sleep(700);
+  check(!kevin.events.some((m) => isOutcome(m, 12, '')), 'nothing is paid while CI is still running');
+  setFake((f) => (f.prs[12].ci = 'passed'));
+  const ci12 = await outcomeXp(kevin, 12, 'CI passed');
+  check(ci12.agentId === otto && ci12.skill === 'issue' && ci12.amount === 20, 'CI passing pays +20 issue XP ("PR #12 CI passed +20")');
+  setFake((f) => Object.assign(f.prs[12], { state: 'MERGED', mergedAt: new Date().toISOString(), mergeCommit: 'abc1234def5678' }));
+  const merged12 = await outcomeXp(kevin, 12, 'merged');
+  await kevin.wait((m) => m.t === 'event' && m.kind === 'toast' && /Otto: PR #12 merged \+60 XP/.test(m.text), 'merge toast');
+  check(merged12.amount === 60, 'the merge pays +60, with a toast for the whole office');
+  setFake((f) => f.commits.push({ sha: 'f00d', message: 'Revert "Fix the login redirect"\n\nThis reverts commit abc1234def5678.' }));
+  const reverted12 = await outcomeXp(kevin, 12, 'reverted');
+  check(reverted12.amount === -60 && reverted12.reasons[0] === 'PR #12 reverted −60', 'a revert on the base branch takes the merge bonus back (−60)');
+  await sleep(1500); // several more polls
+  check(kevin.events.filter((m) => isOutcome(m, 12, '')).length === 3, 'each outcome is paid exactly once while the runner keeps polling');
+  const ottoStats = agentIn(kevin, otto).stats;
+  check(ottoStats.prsMerged === 1 && ottoStats.ciPassed === 1 && ottoStats.prsReverted === 1, "the agent card counts real outcomes: merged 1 · CI passed 1 · reverted 1");
+  await until(() => trackedPrs(otto)[0].done && trackedPrs(otto)[0].acked.reverted, 'PR #12 finished');
+  check(true, 'after the revert the runner stops following PR #12');
+  // No URL in the output: the runner asks the host for the PR from the session's branch.
+  kevin.send({ t: 'hire', deskId: 12, agentId: null, name: 'Pia', task: { text: 'look around the repo', kind: 'general' }, worktree: true });
+  const pia = (await kevin.wait((m) => m.t === 'state' && m.state.agents.some((a) => a.name === 'Pia'), 'Pia hired')).state.agents.find((a) => a.name === 'Pia').id;
+  await kevin.wait((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === pia, "Pia's first turn", 20000);
+  const piaBranch = execFileSync('git', ['-C', repo, 'branch', '--list', 'guild/pia-*', '--format=%(refname:short)']).toString().trim();
+  setFake((f) => {
+    f.branches[piaBranch] = 'https://github.com/guild/smoke/pull/13';
+    f.prs[13] = { title: 'Add dark mode', state: 'OPEN', ci: 'pending' };
+  });
+  kevin.send({ t: 'prompt', agentId: pia, text: 'fix issue #13 and open a pr' });
+  await kevin.wait((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === pia && m.skill === 'issue', "Pia's PR turn", 20000);
+  await until(() => trackedPrs(pia).some((r) => r.key === 'github:guild/smoke#13'), 'PR #13 followed');
+  check(/^guild\/pia-/.test(piaBranch), `with no URL in the output, the PR is found from the session's branch (${piaBranch})`);
+  setFake((f) => (f.prs[13].ci = 'passed'));
+  const ci13 = await outcomeXp(kevin, 13, 'CI passed');
+  check(ci13.agentId === pia, "PR #13's CI pays Pia");
 
   // --- server restart with the agent still at its desk
   alice.send({ t: 'sub', agentId });
@@ -409,6 +466,10 @@ async function main() {
   await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.status === 'done', 'done after permission', 20000);
   const lessons4 = await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.lessons?.conflict > 0, 'conflict lesson', 10000);
   check(Boolean(lessons4), 'the agent wrote its lesson to the playbook file the task note named (conflict.md)');
+  setFake((f) => Object.assign(f.prs[13], { state: 'MERGED', mergedAt: new Date().toISOString(), mergeCommit: '1313131313' }));
+  const merged13 = await outcomeXp(kevin2, 13, 'merged');
+  await sleep(1000);
+  check(merged13.amount === 60 && !kevin2.events.some((m) => isOutcome(m, 13, 'CI passed')), "after the server restart PR #13's merge pays once, and its CI isn't paid again");
   const lee2 = player(KEYS.Lee);
   await lee2.ready;
   const lw = await lee2.wait((m) => m.t === 'welcome', 'lab after restart');
@@ -432,6 +493,19 @@ async function main() {
   kevin2.send({ t: 'access-revoke', agentId, name: 'alice' });
   await alice3.wait((m) => m.t === 'event' && m.kind === 'toast' && /took back your access/.test(m.text), 'revoked');
   check(true, "an 'always' grant sticks until the owner takes it back");
+
+  // --- a runner that lost track of what the office acknowledged re-reports it all: nothing is paid twice
+  const seenBefore = kevin2.events.length;
+  kevinRunner.kill('SIGKILL');
+  await sleep(300);
+  for (const id of [otto, pia]) {
+    const file = path.join(TMP, 'Kevin', 'offices', 'main', 'agents', id, 'prs.json');
+    fs.writeFileSync(file, JSON.stringify(trackedPrs(id).map((r) => ({ ...r, acked: {}, done: false, nextPollAt: 0 }))));
+  }
+  kevinRunner = startRunner('Kevin');
+  await until(() => trackedPrs(otto)[0].acked.reverted && trackedPrs(pia)[0].acked.merged, 're-acknowledged', 20000);
+  await sleep(500);
+  check(!kevin2.events.slice(seenBefore).some((m) => isOutcome(m, 12, '') || isOutcome(m, 13, '')), 'a restarted runner re-reporting every outcome is acknowledged, but nothing is paid twice');
   await sleep(300);
 }
 

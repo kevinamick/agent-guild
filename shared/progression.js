@@ -124,3 +124,19 @@ export function turnXp({ toolCalls = 0, durationMs = 0, prOpened = false, prMerg
   }
   return { amount: Math.min(200, amount), reasons };
 }
+
+// XP for what became of a PR the agent opened, paid once each to the skill of the
+// work that opened it. Opening a PR already earns +50 in its turn; these reward it
+// landing. A revert takes the merge bonus back (never below zero for the skill).
+export const OUTCOME_XP = { ci: 20, merged: 60, reverted: -60 };
+export const OUTCOMES = Object.keys(OUTCOME_XP);
+
+// `have` is the skill's current XP, so a deduction says what it really takes.
+export function outcomeXp(event, number, have = Infinity) {
+  const nominal = OUTCOME_XP[event];
+  if (!nominal) return null;
+  const amount = nominal > 0 ? nominal : 0 - Math.min(-nominal, Math.max(0, have));
+  const pr = number ? `PR #${number}` : 'PR';
+  const what = { ci: `${pr} CI passed`, merged: `${pr} merged`, reverted: `${pr} reverted` }[event];
+  return { amount, reasons: [`${what} ${nominal < 0 ? '−' : '+'}${Math.abs(amount)}`] };
+}

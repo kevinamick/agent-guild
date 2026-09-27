@@ -19,8 +19,9 @@ import {
   isoWeekId, addWeekly, weeklyOf, pickMvp, bountyProblem, recordWork, resolveClaim, createBountyStore,
 } from './bounties.js';
 import {
-  SKILLS, SKILL_INFO, KUDOS_XP, emptyXp, levelFor, overallLevel, titleFor, bestSkill, turnXp, totalXp,
+  SKILLS, SKILL_INFO, KUDOS_XP, emptyXp, levelFor, overallLevel, titleFor, bestSkill, turnXp, totalXp, outcomeXp,
 } from '../shared/progression.js';
+import { cleanOutcome, recordOutcome } from './outcomes.js';
 
 const { values: opts } = parseArgs({
   options: {
@@ -124,10 +125,13 @@ function createOffice(officeId, officeName, dataDir) {
   let saveTimer = null;
   function saveProfiles() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      fs.writeFileSync(PROFILES_FILE + '.tmp', JSON.stringify(Object.fromEntries(profiles), null, 2));
-      fs.renameSync(PROFILES_FILE + '.tmp', PROFILES_FILE);
-    }, 250);
+    saveTimer = setTimeout(flushProfiles, 250);
+  }
+  // Now, not debounced: for writes that are acknowledged to a runner.
+  function flushProfiles() {
+    clearTimeout(saveTimer);
+    fs.writeFileSync(PROFILES_FILE + '.tmp', JSON.stringify(Object.fromEntries(profiles), null, 2));
+    fs.renameSync(PROFILES_FILE + '.tmp', PROFILES_FILE);
   }
 
   // ---------------------------------------------------------------- views
@@ -258,6 +262,42 @@ function createOffice(officeId, officeName, dataDir) {
     pushState();
   }
 
+  // Takes XP back (a reverted PR), never below zero for the skill. Levels can drop.
+  function takeXp(agentId, skill, amount, reasons) {
+    const p = profiles.get(agentId);
+    const taken = Math.min(amount, p?.xp[skill] || 0);
+    if (!p || taken <= 0) return;
+    p.xp[skill] -= taken;
+    saveProfiles();
+    broadcast({ t: 'event', kind: 'xp', agentId, skill, amount: -taken, reasons });
+    const runner = runnerFor(p.owner);
+    if (runner) send(runner.ws, { t: 'profile', agent: runnerAgent(agentId) });
+    pushState();
+  }
+
+  // A runner saw something become of a PR one of its agents opened. Runners re-send
+  // until acknowledged (and again after restarts), so the ledger on the profile pays
+  // each outcome once; duplicates are acknowledged too, so the runner can stop.
+  const OUTCOME_STATS = { ci: 'ciPassed', merged: 'prsMerged', reverted: 'prsReverted' };
+  const OUTCOME_ICONS = { ci: '✅', merged: '🚀', reverted: '⏪' };
+  function onOutcome(runner, msg) {
+    const p = profiles.get(msg.agentId);
+    const o = cleanOutcome(msg);
+    if (!runner.ready || !p || !o || !sameName(p.owner, runner.owner)) return;
+    const { award, skill } = recordOutcome(p, o);
+    if (award) {
+      p.stats[OUTCOME_STATS[o.event]] = (p.stats[OUTCOME_STATS[o.event]] || 0) + 1;
+      const { amount, reasons } = outcomeXp(o.event, o.number, p.xp[skill] || 0);
+      toast(`${OUTCOME_ICONS[o.event]} ${p.name}: ${reasons[0]} XP`);
+      if (amount > 0) grantXp(p.id, skill, amount, reasons, null);
+      else if (amount < 0) takeXp(p.id, skill, -amount, reasons);
+      else pushState();
+    }
+    // On disk before the ack, so a crash can't leave an outcome acknowledged but unrecorded.
+    flushProfiles();
+    send(runner.ws, { t: 'outcome-ack', agentId: p.id, key: o.key, event: o.event });
+  }
+
   function runnerAgent(id) {
     const p = profiles.get(id);
     return { id, name: p.name, color: p.color, owner: p.owner, xp: p.xp, stats: p.stats, cost: p.cost };
@@ -278,7 +318,7 @@ function createOffice(officeId, officeName, dataDir) {
       owner,
       color: COLORS[Math.floor(Math.random() * COLORS.length)],
       xp: emptyXp(),
-      stats: { tasks: 0, borrowed: 0, kudos: 0, prsOpened: 0, prsMerged: 0, reviews: 0 },
+      stats: { tasks: 0, borrowed: 0, kudos: 0, prsOpened: 0, prsMerged: 0, reviews: 0, ciPassed: 0, prsReverted: 0 },
       createdAt: Date.now(),
     };
     profiles.set(id, profile);
@@ -770,13 +810,15 @@ function createOffice(officeId, officeName, dataDir) {
     runner.engines = Array.isArray(msg.engines) ? msg.engines.slice(0, 8) : [];
     runner.pty = cleanPtyInfo(msg.pty);
     runner.lend = msg.lend !== false;
+    // Runners that follow PRs report real merges, so a merge command no longer counts one.
+    runner.outcomes = msg.outcomes === true;
     // A runner remembers its agents locally; merge so XP survives either side restarting.
     for (const a of msg.agents || []) {
       const existing = profiles.get(a.id);
       if (!existing) {
         profiles.set(a.id, {
           id: a.id, name: a.name, owner: runner.owner, color: a.color, xp: { ...emptyXp(), ...a.xp },
-          stats: { tasks: 0, borrowed: 0, kudos: 0, prsOpened: 0, prsMerged: 0, reviews: 0, ...a.stats }, createdAt: Date.now(),
+          stats: { tasks: 0, borrowed: 0, kudos: 0, prsOpened: 0, prsMerged: 0, reviews: 0, ciPassed: 0, prsReverted: 0, ...a.stats }, createdAt: Date.now(),
           ...(a.cost && { cost: cleanCost(a.cost) }),
         });
       } else {
@@ -836,7 +878,7 @@ function createOffice(officeId, officeName, dataDir) {
       release(agentId, l);
     }
     saveProfiles();
-    send(runner.ws, { t: 'welcome', owner: runner.owner });
+    send(runner.ws, { t: 'welcome', owner: runner.owner, outcomes: true });
     if (gone.length) toast(`${gone.join(', ')} went home: ${gone.length > 1 ? 'their sessions' : 'the session'} ended when ${runner.owner}'s runner restarted`);
     toast(`🔌 ${runner.owner}'s runner joined${restored ? `, ${restored} agent${restored > 1 ? 's' : ''} back at their desks` : ''}`);
     pushState();
@@ -871,6 +913,8 @@ function createOffice(officeId, officeName, dataDir) {
       clearTimeout(pending.timer);
       return msg.error ? pending.reject(new Error(msg.error)) : pending.resolve(msg.data);
     }
+    // Outcomes arrive whenever a PR moves, whether or not the agent is at a desk.
+    if (msg.t === 'outcome') return onOutcome(runner, msg);
     const l = live.get(msg.agentId);
     if (!l || l.runnerId !== runner.id) return;
     switch (msg.t) {
@@ -912,10 +956,11 @@ function createOffice(officeId, officeName, dataDir) {
             case 'turn': {
         const p = profiles.get(msg.agentId);
         const stats = msg.stats || {};
-        const { amount, reasons } = turnXp(stats);
+        // A runner that follows PR outcomes pays for the real merge; don't also pay for the command.
+        const { amount, reasons } = turnXp(runner.outcomes ? { ...stats, prMerged: false } : stats);
         if ((stats.toolCalls || 0) > 0) p.stats.tasks++;
         if (stats.prOpened) p.stats.prsOpened++;
-        if (stats.prMerged) p.stats.prsMerged++;
+        if (stats.prMerged && !runner.outcomes) p.stats.prsMerged++;
         if (stats.reviewed) p.stats.reviews++;
         // Runners from 0.4.1 detect the kind per turn; older ones leave it to the desk.
         const kind = SKILLS.includes(stats.kind) ? stats.kind : l.task?.kind || 'general';

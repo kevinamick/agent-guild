@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { xpForLevel, levelFor, progress, turnXp, playbookCapacity, overallLevel, emptyXp, hatFor } from './progression.js';
+import { xpForLevel, levelFor, progress, turnXp, playbookCapacity, overallLevel, emptyXp, hatFor, outcomeXp, OUTCOME_XP } from './progression.js';
 
 test('level curve is monotonic and round-trips', () => {
   for (let l = 1; l < 30; l++) {
@@ -48,4 +48,17 @@ test('avatar input is clamped to known options', () => {
   assert.equal(a.hairColor, '#3b2314');
   assert.equal(a.shirt, '#3b82f6');
   assert.equal(sanitizeAvatar().hair, 'short');
+});
+
+test('outcome xp pays once-per-PR bonuses and a revert takes the merge back, never below zero', () => {
+  assert.deepEqual(outcomeXp('ci', 12), { amount: 20, reasons: ['PR #12 CI passed +20'] });
+  assert.deepEqual(outcomeXp('merged', 12), { amount: 60, reasons: ['PR #12 merged +60'] });
+  assert.deepEqual(outcomeXp('reverted', 12), { amount: -60, reasons: ['PR #12 reverted −60'] });
+  assert.deepEqual(outcomeXp('reverted', 12, 25), { amount: -25, reasons: ['PR #12 reverted −25'] });
+  assert.equal(outcomeXp('reverted', 12, 0).amount, 0);
+  assert.equal(outcomeXp('bogus', 1), null);
+  // Outcomes matter, but a PR's whole life pays less than one solid turn that opened it.
+  const opened = turnXp({ toolCalls: 12, durationMs: 4 * 60000, prOpened: true }).amount;
+  assert.ok(OUTCOME_XP.ci + OUTCOME_XP.merged < opened && OUTCOME_XP.merged > OUTCOME_XP.ci);
+  assert.equal(OUTCOME_XP.reverted, -OUTCOME_XP.merged);
 });
