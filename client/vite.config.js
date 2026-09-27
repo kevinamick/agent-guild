@@ -10,7 +10,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
-    proxy: { '/ws': { target: 'ws://localhost:4600', ws: true } },
+    proxy: { '/ws': { target: 'ws://localhost:4600', ws: true }, '/pictures': 'http://localhost:4600' },
     fs: { allow: [path.resolve(root, '..')] },
   },
   build: { outDir: path.resolve(root, 'dist'), emptyOutDir: true, chunkSizeWarningLimit: 2000 },

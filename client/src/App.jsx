@@ -5,6 +5,7 @@ import { TopLeft, TopRight, InteractionBar, Toasts, Chat } from './ui/Hud.jsx';
 import { TerminalModal } from './ui/Terminal.jsx';
 import { CharacterModal } from './ui/Character.jsx';
 import { BoardModal, HireModal, PromptModal, RosterModal, AgentModal, HelpModal, TeamModal } from './ui/Modals.jsx';
+import { PictureModal, interactPicture } from './ui/PictureModal.jsx';
 
 
 function readSaved() {
@@ -71,6 +72,8 @@ function ModalRouter() {
       return <TeamModal />;
     case 'character':
       return <CharacterModal first={modal.first} />;
+    case 'picture':
+      return <PictureModal key={modal.spot} spot={modal.spot} />;
     default:
       return null;
   }
@@ -93,6 +96,7 @@ function interact(key) {
     if (key === 'e' || key === 'h') openModal({ type: 'hire', deskId: focus.deskId, kind: 'general' });
     return;
   }
+  if (focus.type === 'picture') return interactPicture(key, focus.spot);
   const agent = agents[focus.agentId];
   if (!agent) return;
   if (key === 'e') openModal({ type: 'terminal', agentId: agent.id });
