@@ -280,3 +280,9 @@ body[data-upstairs='1'] .floor-label { display: none; }
 .recruit-name { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .recruit-name .input { max-width: 280px; }
 .name-error { color: #b91c1c; font-weight: 700; }
+
+/* first-person view */
+body[data-fp='1'] canvas { touch-action: none; } /* drag-to-look instead of scrolling on touch */
+.crosshair { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 1.5px rgba(31, 35, 53, 0.7); pointer-events: none; z-index: 90; transition: transform 0.12s, background 0.12s; }
+.crosshair.on { background: #facc15; transform: scale(1.7); }
+.look-hint { position: fixed; left: 50%; top: calc(50% + 26px); transform: translateX(-50%); z-index: 90; pointer-events: none; background: rgba(31, 35, 53, 0.72); color: #fff; font-weight: 800; font-size: 12px; padding: 3px 10px; border-radius: 99px; white-space: nowrap; }

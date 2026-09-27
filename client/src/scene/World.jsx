@@ -6,9 +6,12 @@ import { Office } from './Office.jsx';
 import { view } from './view.js';
 import { Person, Bot } from './Characters.jsx';
 import { useGame, positions, localPlayer, sendMove } from '../net.js';
-import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK, PICTURE_SPOTS } from '../../../shared/layout.js';
+import { DESKS, BOARDS, DOOR, deskById, step, BOSS_DESK, PICTURE_SPOTS, MEZZ, TV } from '../../../shared/layout.js';
 import { SKILL_INFO } from '../../../shared/progression.js';
 import { tvReach } from '../../../shared/tv.js';
+import { useCameraMode, look as fpView } from './cameraMode.js';
+import { EYE_HEIGHT, moveVector, pickTarget, wrapAngle, ease } from './firstPerson.js';
+import { LookControls } from './LookControls.jsx';
 
 export const keys = new Set();
 const SPEED = 5.5;
@@ -21,6 +24,9 @@ const CAM_MAX_X_UP = 19.3;
 const LOOK_UP = { dx: -10, y: 0.3, dz: -13 };
 const FOV = 55;
 const FOV_UP = 62;
+const FOV_FP = 70;
+const BLEND_TIME = 0.7; // seconds for the camera to glide between third and first person
+const UP = new THREE.Vector3(0, 1, 0);
 
 
 function applyStep(nx, nz) {
@@ -28,38 +34,100 @@ function applyStep(nx, nz) {
   if (next) Object.assign(localPlayer, next);
 }
 
-function findFocus(x, z, level) {
-  if (level === 'stairs') return null;
+// Everything within reach of (x, z): { focus, d (reach distance), x, y, z (a point
+// to aim at), wall? (flat wall items: which way they span and how far) }.
+function focusTargets(x, z, level) {
+  const out = [];
+  if (level === 'stairs') return out;
   if (level === 'mezz') {
-    return Math.hypot(BOSS_DESK.x - x, (BOSS_DESK.z - z) * 0.8) < 2.6 ? { type: 'boss' } : null;
+    const d = Math.hypot(BOSS_DESK.x - x, (BOSS_DESK.z - z) * 0.8);
+    if (d < 2.6) out.push({ focus: { type: 'boss' }, d, x: BOSS_DESK.x, y: MEZZ.y + 0.8, z: BOSS_DESK.z });
+    return out;
   }
   const { agents, desks } = useGame.getState();
-  let best = null;
-  let bestD = Infinity;
-  const consider = (d, focus) => {
-    if (d < bestD) {
-      bestD = d;
-      best = focus;
-    }
-  };
   for (const desk of DESKS) {
     const d = Math.hypot(desk.seatX - x, desk.seatZ - z);
     if (d > 1.9) continue;
     const agentId = desks[desk.id];
-    if (agentId && agents[agentId]) consider(d, { type: 'agent', agentId, deskId: desk.id });
-    else if (d < 1.5) consider(d + 0.2, { type: 'desk', deskId: desk.id });
+    if (agentId && agents[agentId]) out.push({ focus: { type: 'agent', agentId, deskId: desk.id }, d, x: desk.seatX, y: 1.2, z: desk.seatZ });
+    else if (d < 1.5) out.push({ focus: { type: 'desk', deskId: desk.id }, d: d + 0.2, x: desk.x, y: 0.8, z: desk.z });
   }
   for (const b of BOARDS) {
     const d = b.side ? Math.hypot(b.x - x, (b.z - z) * 0.45) : Math.hypot((b.x - x) * 0.45, b.z - z);
-    if (d < 2.6) consider(d, { type: 'board', board: b.id });
+    if (d < 2.6) out.push({ focus: { type: 'board', board: b.id }, d, x: b.x, y: 2.6, z: b.z, wall: { axis: b.side ? 'z' : 'x', half: b.side ? 2.7 : 3.2, halfH: 1.6 } });
   }
   for (const s of PICTURE_SPOTS) {
     if (Math.abs(s.x - x) > 2.6 || Math.abs(s.z - z) > 1.3) continue;
-    consider(Math.hypot((s.x - x) * 0.5, s.z - z), { type: 'picture', spot: s.id });
+    out.push({ focus: { type: 'picture', spot: s.id }, d: Math.hypot((s.x - x) * 0.5, s.z - z), x: s.x, y: s.y, z: s.z, wall: { axis: 'z', half: 1.1, halfH: 0.8 } });
   }
   const tv = tvReach(x, z);
-  if (tv !== null) consider(tv, { type: 'tv' });
-  return best;
+  if (tv !== null) out.push({ focus: { type: 'tv' }, d: tv, x: TV.x, y: TV.y, z: TV.z, wall: { axis: 'z', half: TV.w / 2, halfH: TV.h / 2 } });
+  return out;
+}
+
+// Third person: the nearest thing in reach.
+function findFocus(x, z, level) {
+  let best = null;
+  for (const t of focusTargets(x, z, level)) if (!best || t.d < best.d) best = t;
+  return best ? best.focus : null;
+}
+
+// First person prefers what you're looking at (see pickTarget).
+function updateFocus() {
+  const { x, y, z, level } = localPlayer;
+  let focus;
+  let aimed = false;
+  if (useCameraMode.getState().firstPerson) ({ focus, aimed } = pickTarget(focusTargets(x, z, level), { x, y: y + EYE_HEIGHT, z }, fpView.yaw, fpView.pitch));
+  else focus = findFocus(x, z, level);
+  if (!sameFocus(focus, useGame.getState().focus)) useGame.setState({ focus });
+  if (aimed !== useCameraMode.getState().aimed) useCameraMode.setState({ aimed });
+}
+
+// Third person: keys walk in screen (world) directions and you turn to face the way you go.
+function thirdPersonStep(dt) {
+  let dx = 0;
+  let dz = 0;
+  if (keys.has('w') || keys.has('arrowup')) dz -= 1;
+  if (keys.has('s') || keys.has('arrowdown')) dz += 1;
+  if (keys.has('a') || keys.has('arrowleft')) dx -= 1;
+  if (keys.has('d') || keys.has('arrowright')) dx += 1;
+  if (dx === 0 && dz === 0) return false;
+  const len = Math.hypot(dx, dz);
+  const stride = (SPEED * dt) / len;
+  applyStep(localPlayer.x + dx * stride, localPlayer.z);
+  applyStep(localPlayer.x, localPlayer.z + dz * stride);
+  const want = Math.atan2(dx, dz);
+  let diff = want - localPlayer.ry;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  localPlayer.ry += diff * Math.min(1, dt * 14);
+  sendMove(localPlayer.x, localPlayer.y, localPlayer.z, localPlayer.ry);
+  updateFocus();
+  return true;
+}
+
+// First person: the mouse turns you and WASD walks relative to where you look.
+// Returns whether you're walking.
+const sent = { x: 0, z: 0, ry: 0, at: 0 };
+function firstPersonStep(dt) {
+  const k = Math.min(1, dt * 20);
+  fpView.yaw += (fpView.wantYaw - fpView.yaw) * k;
+  fpView.pitch += (fpView.wantPitch - fpView.pitch) * k;
+  localPlayer.ry = wrapAngle(fpView.yaw);
+  const mv = moveVector(fpView.yaw, keys);
+  if (mv) {
+    const stride = SPEED * dt;
+    applyStep(localPlayer.x + mv.dx * stride, localPlayer.z);
+    applyStep(localPlayer.x, localPlayer.z + mv.dz * stride);
+  }
+  // Turning in place is news too (others see you face things), at the usual move rate.
+  const p = localPlayer;
+  const now = performance.now();
+  if (now - sent.at > 80 && (p.x !== sent.x || p.z !== sent.z || Math.abs(wrapAngle(p.ry - sent.ry)) > 0.01)) {
+    sendMove(p.x, p.y, p.z, p.ry);
+    Object.assign(sent, { x: p.x, z: p.z, ry: p.ry, at: now });
+  }
+  updateFocus();
+  return Boolean(mv);
 }
 
 function sameFocus(a, b) {
@@ -73,36 +141,26 @@ function LocalPlayer() {
   const me = useGame((s) => s.players.find((p) => p.id === s.me));
   const bubble = useBubble(me?.id);
   const target = useMemo(() => new THREE.Vector3(), []);
+  const firstPerson = useCameraMode((s) => s.firstPerson);
 
   const look = useMemo(() => new THREE.Vector3(), []);
   const wantLook = useMemo(() => new THREE.Vector3(), []);
+  // The third-person camera keeps following in first person too (unseen), so
+  // switching back glides from the eye to where it belongs.
+  const tpPos = useMemo(() => new THREE.Vector3(), []);
+  const eye = useMemo(() => new THREE.Vector3(), []);
+  const tmp = useMemo(() => ({ m: new THREE.Matrix4(), q: new THREE.Quaternion(), fq: new THREE.Quaternion(), e: new THREE.Euler(0, 0, 0, 'YXZ') }), []);
   useEffect(() => {
-    camera.position.set(localPlayer.x + CAM_OFFSET.x, CAM_OFFSET.y, localPlayer.z + CAM_OFFSET.z);
+    tpPos.set(localPlayer.x + CAM_OFFSET.x, CAM_OFFSET.y, localPlayer.z + CAM_OFFSET.z);
+    camera.position.copy(tpPos);
     look.set(localPlayer.x, 1.2, localPlayer.z - LOOK_AHEAD);
+    fpView.blend = useCameraMode.getState().firstPerson ? 1 : 0;
   }, [camera]);
 
   useFrame((_, dt) => {
     dt = Math.min(dt, 0.05);
-    let dx = 0;
-    let dz = 0;
-    if (keys.has('w') || keys.has('arrowup')) dz -= 1;
-    if (keys.has('s') || keys.has('arrowdown')) dz += 1;
-    if (keys.has('a') || keys.has('arrowleft')) dx -= 1;
-    if (keys.has('d') || keys.has('arrowright')) dx += 1;
-    moving.current = dx !== 0 || dz !== 0;
-    if (moving.current) {
-      const len = Math.hypot(dx, dz);
-      const stride = (SPEED * dt) / len;
-      applyStep(localPlayer.x + dx * stride, localPlayer.z);
-      applyStep(localPlayer.x, localPlayer.z + dz * stride);
-      const want = Math.atan2(dx, dz);
-      let diff = want - localPlayer.ry;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      localPlayer.ry += diff * Math.min(1, dt * 14);
-      sendMove(localPlayer.x, localPlayer.y, localPlayer.z, localPlayer.ry);
-      const focus = findFocus(localPlayer.x, localPlayer.z, localPlayer.level);
-      if (!sameFocus(focus, useGame.getState().focus)) useGame.setState({ focus });
-    }
+    const fp = useCameraMode.getState().firstPerson;
+    moving.current = fp ? firstPersonStep(dt) : thirdPersonStep(dt);
     // The upper floor appears once you start up the stairs.
     const upstairs = localPlayer.level !== 'ground';
     if (upstairs !== view.upstairs) {
@@ -116,12 +174,27 @@ function LocalPlayer() {
     const off = up ? CAM_OFFSET_UP : CAM_OFFSET;
     target.set(localPlayer.x + off.x, localPlayer.y + off.y, localPlayer.z + off.z);
     if (up) target.x = Math.min(target.x, CAM_MAX_X_UP);
-    camera.position.lerp(target, Math.min(1, dt * 5));
+    tpPos.lerp(target, Math.min(1, dt * 5));
     if (up) wantLook.set(localPlayer.x + LOOK_UP.dx, LOOK_UP.y, localPlayer.z + LOOK_UP.dz);
     else wantLook.set(localPlayer.x, localPlayer.y + 1.2, localPlayer.z - LOOK_AHEAD);
     look.lerp(wantLook, Math.min(1, dt * 5));
-    camera.lookAt(look);
-    const fov = up ? FOV_UP : FOV;
+    // Glide between the follow camera and the eye: position lerps, rotation slerps
+    // (lerping look-at points could swing through the camera and flip the view).
+    fpView.blend = Math.min(1, Math.max(0, fpView.blend + (fp ? dt : -dt) / BLEND_TIME));
+    const b = ease(fpView.blend);
+    eye.set(localPlayer.x, localPlayer.y + EYE_HEIGHT, localPlayer.z);
+    if (b === 0) {
+      camera.position.copy(tpPos);
+      camera.lookAt(look);
+    } else {
+      camera.position.lerpVectors(tpPos, eye, b);
+      tmp.q.setFromRotationMatrix(tmp.m.lookAt(tpPos, look, UP));
+      tmp.fq.setFromEuler(tmp.e.set(fpView.pitch, fpView.yaw + Math.PI, 0));
+      camera.quaternion.slerpQuaternions(tmp.q, tmp.fq, b);
+    }
+    // Your own head would fill the view; everyone else stays visible.
+    group.current.visible = camera.position.distanceTo(eye) > 0.9;
+    const fov = fp ? FOV_FP : up ? FOV_UP : FOV;
     if (Math.abs(camera.fov - fov) > 0.05) {
       camera.fov += (fov - camera.fov) * Math.min(1, dt * 4);
       camera.updateProjectionMatrix();
@@ -131,14 +204,12 @@ function LocalPlayer() {
   // Focus can also change when the world changes around a standing player.
   const agents = useGame((s) => s.agents);
   const desks = useGame((s) => s.desks);
-  useEffect(() => {
-    const focus = findFocus(localPlayer.x, localPlayer.z, localPlayer.level);
-    if (!sameFocus(focus, useGame.getState().focus)) useGame.setState({ focus });
-  }, [agents, desks]);
+  useEffect(updateFocus, [agents, desks, firstPerson]);
 
   return (
     <group ref={group}>
-      <Person name={me?.name || ''} avatar={me?.avatar} moving={moving} bubble={bubble} isMe />
+      {/* in first person your own speech bubble would hang just above the eye */}
+      <Person name={firstPerson ? undefined : me?.name || ''} avatar={me?.avatar} moving={moving} bubble={bubble} isMe />
     </group>
   );
 }
@@ -315,6 +386,7 @@ export function World() {
       <Agents />
       <Players />
       <LocalPlayer />
+      <LookControls />
       <Effects />
     </Canvas>
   );

@@ -9,6 +9,8 @@ import { PictureModal, interactPicture } from './ui/PictureModal.jsx';
 import { Soundscape } from './ui/Sound.jsx';
 import { TvModal } from './ui/TvModal.jsx';
 import { tvInteract } from './rtc/screenShare.js';
+import { toggleFirstPerson } from './scene/cameraMode.js';
+import { FirstPersonOverlay } from './ui/ViewToggle.jsx';
 
 
 function readSaved() {
@@ -88,6 +90,7 @@ function interact(key) {
   const { focus, agents } = useGame.getState();
   if (key === 'g') return openModal({ type: 'roster' });
   if (key === '?') return openModal({ type: 'help' });
+  if (key === 'v') return toggleFirstPerson();
   if (!focus) return;
   if (focus.type === 'boss') {
     if (key === 'e') openModal({ type: 'roster' });
@@ -130,7 +133,7 @@ function useGameKeys() {
         return;
       }
       if (e.repeat) return;
-      if (['e', 'p', 'x', 'k', 'h', 'c', 'g', '?'].includes(k)) {
+      if (['e', 'p', 'x', 'k', 'h', 'c', 'g', '?', 'v'].includes(k)) {
         e.preventDefault();
         interact(k);
       }
@@ -175,6 +178,7 @@ function Game() {
       <TopLeft />
       <TopRight />
       <InteractionBar />
+      <FirstPersonOverlay />
       <Chat />
       <Toasts />
       <ModalRouter />

@@ -594,6 +594,7 @@ export function HelpModal() {
           <kbd>T</kbd><span>chat</span>
           <kbd>M</kbd><span>mute or unmute your mic (after 🎙️ Join voice; you hear people near you)</span>
           <kbd>G</kbd><span>Guild Hall leaderboard</span>
+          <kbd>V</kbd><span>first-person view (🎥 / 👁️): click the view to look around with the mouse, Esc to let go; WASD walks where you look</span>
           <kbd>Ctrl ]</kbd><span>step away from a terminal</span>
         </div>
         <h4>Leveling</h4>
