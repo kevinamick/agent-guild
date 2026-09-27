@@ -198,8 +198,20 @@ export function InteractionBar() {
 
 export function Toasts() {
   const toasts = useGame((s) => s.toasts);
+  const agents = useGame((s) => s.agents);
+  const claims = useGame((s) => s.fx).filter((f) => f.kind === 'bounty');
   return (
     <div className="toasts">
+      {claims.map((f) => (
+        <div key={f.id} className="bounty-banner">
+          <span className="bounty-coins">💰</span>
+          <div>
+            <b>Bounty claimed!</b>
+            <div>{agents[f.agentId]?.name || 'An agent'} landed #{f.number} for +{f.amount} XP</div>
+          </div>
+          <span className="bounty-coins">💰</span>
+        </div>
+      ))}
       {toasts.map((t) => (
         <div key={t.id} className={`toast ${t.tone}`}>{t.text}</div>
       ))}

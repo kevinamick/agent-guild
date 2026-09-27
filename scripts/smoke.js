@@ -16,6 +16,15 @@ const KEYS = { Kevin: 'ag_kevin_test_key', Alice: 'ag_alice_test_key' };
 const procs = [];
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
+// The smoke repo has no remote, so the runners serve boards from this file instead
+// (a test-only hook), and the server re-reads boards every 1.5s while bounties are open.
+const BOARDS = path.join(TMP, 'boards.json');
+process.env.GUILD_TEST_BOARDS = BOARDS;
+process.env.GUILD_BOUNTY_POLL_MS = '1500';
+const writeBoards = (issues) => fs.writeFileSync(BOARDS, JSON.stringify({ issues, prs: [] }));
+const issue = (number, state = 'OPEN') => ({ number, title: `Bounty test ${number}`, state, labels: [], url: `https://example.test/issues/${number}`, author: { login: 't' } });
+writeBoards([]);
+
 const repo = path.join(TMP, 'repo');
 fs.mkdirSync(repo);
 execFileSync('git', ['init', '-q'], { cwd: repo });
@@ -73,6 +82,11 @@ const check = (cond, label) => {
   console.log(`  ✓ ${label}`);
 };
 const agentIn = (p, id) => p.state.agents.find((a) => a.id === id);
+// Waits until a condition on the players' latest states holds.
+async function until(cond, label) {
+  for (let i = 0; i < 100; i++, await sleep(50)) if (cond()) return;
+  throw new Error(`timeout: ${label}`);
+}
 
 async function main() {
   let server = startServer();
@@ -314,6 +328,53 @@ async function main() {
   await alice.wait((m) => m.t === 'event' && m.text === "🖼️ Kevin took down Alice's picture", 'admin removes');
   check((await fetch(`http://localhost:${PORT}${alicePic.url}`)).status === 404, "the office admin took down Alice's picture and its file is gone");
 
+  // --- bounties: pinned on an open issue, won by the agent that worked on it once the board shows it closed
+  writeBoards([issue(12), issue(13), issue(14)]);
+  kevin.send({ t: 'board', kind: 'issues', force: true });
+  await kevin.wait((m) => m.t === 'board' && m.kind === 'issues' && m.items?.some((i) => i.number === 12), 'test board');
+  kevin.send({ t: 'bounty', number: 12, amount: 30 });
+  await kevin.wait((m) => m.t === 'error' && /25, 50, 100/.test(m.text), 'odd amount refused');
+  kevin.send({ t: 'bounty', number: 99, amount: 50 });
+  await kevin.wait((m) => m.t === 'error' && /isn't on the board/.test(m.text), 'unknown item refused');
+  alice.send({ t: 'bounty', number: 12, amount: 50 });
+  await kevin.wait((m) => m.t === 'state' && m.state.bounties?.some((b) => b.number === 12 && b.amount === 50 && b.by === 'Alice'), 'bounty posted');
+  kevin.send({ t: 'bounty', number: 12, amount: 25 });
+  await kevin.wait((m) => m.t === 'error' && /already has a 50 XP bounty/.test(m.text), 'second bounty refused');
+  check(true, 'Alice pins a 50 XP bounty on #12 (odd amounts, unknown items and a second bounty are refused)');
+  kevin.send({ t: 'bounty', number: 14, amount: 25 });
+  await alice.wait((m) => m.t === 'state' && m.state.bounties?.some((b) => b.number === 14), 'kevin bounty');
+  alice.send({ t: 'bounty-remove', number: 14 });
+  await alice.wait((m) => m.t === 'error' && /Only Kevin or an admin/.test(m.text), 'alice cannot remove');
+  kevin.send({ t: 'bounty-remove', number: 14 });
+  await until(() => !alice.state.bounties.some((b) => b.number === 14), 'bounty removed');
+  check(true, "only the poster (or an admin) can take a bounty down");
+  kevin.send({ t: 'hire', deskId: 12, agentId: null, name: 'Hunter', task: { text: 'fix issue #12 and open a pr', kind: 'issue', ref: { type: 'issue', number: 12 } } });
+  const hunter = await kevin.wait((m) => m.t === 'state' && m.state.agents.some((a) => a.name === 'Hunter'), 'hunter hired');
+  const hunterId = hunter.state.agents.find((a) => a.name === 'Hunter').id;
+  const workXp = await kevin.wait((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === hunterId, 'hunter xp', 20000);
+  await kevin.wait((m) => m.t === 'state' && m.state.bounties.find((b) => b.number === 12)?.workers.includes(hunterId), 'worker recorded');
+  check(true, 'hiring an agent on #12 records it as a worker on the bounty');
+  writeBoards([issue(12, 'CLOSED'), issue(13)]);
+  kevin.send({ t: 'board', kind: 'issues', force: true });
+  const won = await kevin.wait((m) => m.t === 'event' && m.kind === 'bounty' && m.number === 12, 'bounty claimed');
+  const bountyXp = await kevin.wait((m) => m.t === 'event' && m.kind === 'xp' && m.reasons?.includes('💰 bounty #12 +50'), 'bounty xp');
+  await alice.wait((m) => m.t === 'event' && m.kind === 'toast' && /Hunter .* claimed Alice's 50 XP bounty/.test(m.text), 'claim toast');
+  check(won.agentId === hunterId && bountyXp.agentId === hunterId && bountyXp.amount === 50 && bountyXp.skill === 'issue', 'when the board shows #12 closed, Hunter wins the 50 XP bounty as Issue Fixer XP');
+  kevin.send({ t: 'board', kind: 'issues', force: true });
+  alice.send({ t: 'board', kind: 'issues', force: true });
+  await sleep(2000); // also past a periodic re-read
+  check(kevin.events.filter((m) => m.t === 'event' && m.kind === 'bounty').length === 1 && !kevin.state.bounties.some((b) => b.number === 12), 'the bounty is awarded exactly once');
+  const weekly = agentIn(kevin, hunterId).week;
+  check(weekly.bounties === 1 && weekly.xp === workXp.amount + 50 && /^\d{4}-W\d{2}$/.test(kevin.state.week.id), `this week's tally: Hunter ${weekly.xp} XP, 1 bounty (${kevin.state.week.id})`);
+  alice.send({ t: 'bounty', number: 13, amount: 100 });
+  await kevin.wait((m) => m.t === 'state' && m.state.bounties.some((b) => b.number === 13), 'bounty 13');
+  writeBoards([issue(12, 'CLOSED'), issue(13, 'CLOSED')]);
+  await kevin.wait((m) => m.t === 'event' && m.kind === 'toast' && /bounty on #13 expired/.test(m.text), 'bounty 13 expired', 10000);
+  check(!kevin.events.some((m) => m.t === 'event' && m.kind === 'bounty' && m.number === 13), "a bounty closed without a guild agent expires (noticed by the server's own periodic re-read)");
+  kevin.send({ t: 'dismiss', agentId: hunterId });
+  await until(() => !agentIn(kevin, hunterId).deskId, 'hunter home');
+  await sleep(400); // agent profiles are saved a moment after a change
+
   // --- server restart with the agent still at its desk
   alice.send({ t: 'sub', agentId });
   server.kill('SIGKILL');
@@ -353,6 +414,11 @@ async function main() {
   const lw = await lee2.wait((m) => m.t === 'welcome', 'lab after restart');
   check(lw.state.office.name === 'Lab', 'Lab and its key survive the restart');
   check(pictureAt(kevin2, 'l1')?.url === pic.url && !pictureAt(kevin2, 'r2') && lw.state.pictures.length === 1, 'wall pictures survive the restart, each in its own office');
+  kevin2.send({ t: 'board', kind: 'issues', force: true });
+  await kevin2.wait((m) => m.t === 'board' && m.kind === 'issues', 'board after restart');
+  await sleep(300);
+  check(agentIn(kevin2, hunterId).week.bounties === 1 && agentIn(kevin2, hunterId).week.xp === weekly.xp && !kevin2.state.bounties.length
+    && !kevin2.events.some((m) => m.t === 'event' && m.kind === 'bounty'), "after the restart the claimed bounty stays claimed (no second award) and the weekly tally is kept");
   kevin2.send({ t: 'dismiss', agentId });
   await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId) && !agentIn(m, agentId).deskId && !agentIn(m, agentId).access?.alice, 'once-grant ends');
   check(true, "an 'allow once' grant ends when the agent goes home");

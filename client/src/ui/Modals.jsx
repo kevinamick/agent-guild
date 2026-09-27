@@ -9,6 +9,7 @@ import { AreaPicker } from './AreaPicker.jsx';
 import { kindFromPrompt } from '../../../shared/worktype.js';
 import { noteColor } from './noteColors.js';
 import { costPerTask, formatPerTask, formatTotals, COST_NOTE } from '../../../shared/cost.js';
+import { BOUNTY_AMOUNTS } from '../../../shared/bounties.js';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -75,7 +76,9 @@ export function BoardModal({ kind }) {
   const host = useHost();
   const [selected, setSelected] = useState(null);
   const boardArea = useGame((s) => s.boardArea || '');
+  const bounties = useGame((s) => s.bounties);
   useEffect(() => requestBoard(kind), [kind]);
+  const bountyOf = (item) => (kind === 'issues' && item.state === 'OPEN' ? bounties.find((b) => b.number === item.number) : null);
 
   const activeRefs = useMemo(
     () => new Set(Object.values(agents).filter((a) => a.deskId && a.task?.ref).map((a) => `${a.task.ref.type}:${a.task.ref.number}`)),
@@ -98,7 +101,8 @@ export function BoardModal({ kind }) {
       {board?.truncated && <div className="muted small board-note">Showing the 1,000 most recently changed open work items. Pick a narrower area to see the rest.</div>}
       <div className="columns">
         {COLUMNS[kind].map(([col, label]) => {
-          const inCol = items.filter((i) => columnOf(kind, i, activeRefs) === col);
+          // Bountied items float to the top of their column.
+          const inCol = items.filter((i) => columnOf(kind, i, activeRefs) === col).sort((a, b) => (bountyOf(b)?.amount || 0) - (bountyOf(a)?.amount || 0));
           return (
             <div key={col} className="column">
               <div className="column-head">{label}<span>{inCol.length}</span></div>
@@ -106,8 +110,10 @@ export function BoardModal({ kind }) {
                 {inCol.length === 0 && <div className="muted small">Nothing here</div>}
                 {inCol.map((item) => {
                   const on = workersOn(kind === 'issues' ? 'issue' : 'pr', item.number);
+                  const bounty = bountyOf(item);
                   return (
-                    <div key={item.number} className={`card ${kind}`} style={{ background: noteColor(item, kind) }} onClick={() => setSelected(item)}>
+                    <div key={item.number} className={`card ${kind} ${bounty ? 'bountied' : ''}`} style={{ background: noteColor(item, kind) }} onClick={() => setSelected(item)}>
+                      {bounty && <div className="bounty-ribbon" title={`${bounty.amount} XP bounty from ${bounty.by}`}>💰 {bounty.amount}</div>}
                       <div className="card-num">
                         {kind === 'prs' ? host.prRef(item.number) : `#${item.number}`}
                         {item.type && <span>{item.type}</span>}
@@ -128,7 +134,7 @@ export function BoardModal({ kind }) {
           );
         })}
       </div>
-      {selected && <ItemDetail kind={kind} item={selected} onClose={() => setSelected(null)} />}
+      {selected && <ItemDetail kind={kind} item={selected} bounty={bountyOf(selected)} onClose={() => setSelected(null)} />}
     </Modal>
   );
 }
@@ -143,9 +149,12 @@ function adoBrief(skill, item) {
   return `Azure DevOps pull request !${item.number} ("${item.title}") has merge conflicts with ${item.baseRefName}.\n\nCheck out ${item.headRefName}, merge origin/${item.baseRefName} into it, and resolve every conflict so the intent of both sides is kept. Run the tests, then push the branch and summarize what you resolved.`;
 }
 
-function ItemDetail({ kind, item, onClose }) {
+function ItemDetail({ kind, item, bounty, onClose }) {
   const isIssue = kind === 'issues';
   const host = useHost();
+  const myName = useGame((s) => s.myName);
+  const admin = useGame((s) => s.admin);
+  const agents = useGame((s) => s.agents);
   const ref = isIssue ? `#${item.number}` : host.prRef(item.number);
   const hireFor = (skill) => {
     const text = host.ado
@@ -173,6 +182,28 @@ function ItemDetail({ kind, item, onClose }) {
           <span className="muted small">by {item.author?.login} · {ago(item.createdAt)}</span>
         </div>
         <pre className="detail-body">{(item.body || '(no description)').slice(0, 2400)}</pre>
+        {isIssue && item.state === 'OPEN' && (
+          <div className="bounty-row">
+            {bounty ? (
+              <>
+                <span className="bounty-ribbon inline">💰 {bounty.amount} XP</span>
+                <span className="muted small">
+                  bounty from {sameName(bounty.by, myName) ? 'you' : bounty.by}
+                  {bounty.workers.length > 0 && ` · on it: ${bounty.workers.map((id) => agents[id]?.name || '?').join(', ')}`}
+                </span>
+                <span className="grow" />
+                {(sameName(bounty.by, myName) || admin) && <button className="btn" onClick={() => send({ t: 'bounty-remove', number: item.number })}>Take down</button>}
+              </>
+            ) : (
+              <>
+                <span className="muted small" title="Bonus XP for the agent that lands it: awarded when the board shows it closed">💰 Pin a bounty</span>
+                {BOUNTY_AMOUNTS.map((amount) => (
+                  <button key={amount} className="btn bounty-btn" onClick={() => send({ t: 'bounty', number: item.number, amount })}>+{amount} XP</button>
+                ))}
+              </>
+            )}
+          </div>
+        )}
         <div className="modal-foot">
           <a href={item.url} target="_blank" rel="noreferrer" className="muted small">Open on {host.ado ? 'Azure DevOps' : 'GitHub'} ↗</a>
           <span className="grow" />
@@ -385,8 +416,12 @@ export function PromptModal({ agentId }) {
 export function RosterModal() {
   const agents = useGame((s) => s.agents);
   const myName = useGame((s) => s.myName);
+  const week = useGame((s) => s.week);
+  const bounties = useGame((s) => s.bounties);
   const [sort, setSort] = useState('total');
+  const [period, setPeriod] = useState('all'); // 'all' | 'week'
   const list = Object.values(agents).sort((a, b) => (sort === 'total' ? b.total - a.total : b.skillLevels[sort] - a.skillLevels[sort] || b.total - a.total));
+  const weekly = Object.values(agents).filter((a) => a.week?.xp > 0).sort((a, b) => b.week.xp - a.week.xp || b.week.bounties - a.week.bounties);
   const owners = Object.values(
     list.reduce((acc, a) => {
       const o = (acc[a.owner] ??= { owner: a.owner, agents: 0, xp: 0, lent: 0 });
@@ -408,6 +443,12 @@ export function RosterModal() {
             </div>
           ))}
         </div>
+        <div className="sort-row">
+          <button className={`kind-btn ${period === 'all' ? 'on' : ''}`} style={{ '--c': '#fde68a' }} onClick={() => setPeriod('all')}>🏛️ All time</button>
+          <button className={`kind-btn ${period === 'week' ? 'on' : ''}`} style={{ '--c': '#fde68a' }} onClick={() => setPeriod('week')}>📅 This week</button>
+          {week?.mvp && <span className="muted small">Last week's MVP ({week.mvp.week}): <b>{week.mvp.name}</b> ({week.mvp.owner}), {week.mvp.xp.toLocaleString()} XP</span>}
+        </div>
+        {period === 'week' ? <WeeklyTable weekId={week?.id} list={weekly} bounties={bounties} myName={myName} /> : <>
         <div className="sort-row">
           <span className="muted small">Rank by</span>
           <button className={`kind-btn ${sort === 'total' ? 'on' : ''}`} style={{ '--c': '#a855f7' }} onClick={() => setSort('total')}>⭐ Overall</button>
@@ -454,8 +495,42 @@ export function RosterModal() {
             )}
           </tbody>
         </table>
+        </>}
       </div>
     </Modal>
+  );
+}
+
+// This week's leaderboard: XP earned since Monday, and bounties won.
+function WeeklyTable({ weekId, list, bounties, myName }) {
+  return (
+    <>
+      <table className="roster">
+        <thead>
+          <tr><th>#</th><th>Agent</th><th>Owner</th><th>XP this week</th><th>💰 Bounties</th><th>Level</th></tr>
+        </thead>
+        <tbody>
+          {list.map((a, i) => (
+            <tr key={a.id} onClick={() => openModal({ type: 'agent', agentId: a.id })}>
+              <td>{i === 0 ? '👑' : i + 1}</td>
+              <td><span className="dot" style={{ background: a.color }} /> <b>{a.name}</b></td>
+              <td>{sameName(a.owner, myName) ? <b>you</b> : a.owner}</td>
+              <td><b>{a.week.xp.toLocaleString()}</b> XP</td>
+              <td>{a.week.bounties || ''}</td>
+              <td><LevelBadge level={a.level} /></td>
+            </tr>
+          ))}
+          {!list.length && (
+            <tr><td colSpan={6} className="muted pad">No XP earned yet this week{weekId ? ` (${weekId})` : ''}. Weeks start on Monday.</td></tr>
+          )}
+        </tbody>
+      </table>
+      {bounties.length > 0 && (
+        <div className="muted small bounty-list">
+          💰 Open bounties: {bounties.map((b) => `#${b.number} (${b.amount} XP from ${b.by})`).join(' · ')}
+        </div>
+      )}
+    </>
   );
 }
 

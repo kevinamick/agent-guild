@@ -16,6 +16,9 @@ import { cleanAgentName, sameName } from '../shared/names.js';
 import { createScreen } from './screens.js';
 import { addTurnCost, cleanCost } from '../shared/cost.js';
 import {
+  isoWeekId, addWeekly, weeklyOf, pickMvp, bountyProblem, recordWork, resolveClaim, createBountyStore,
+} from './bounties.js';
+import {
   SKILLS, SKILL_INFO, KUDOS_XP, emptyXp, levelFor, overallLevel, titleFor, bestSkill, turnXp, totalXp,
 } from '../shared/progression.js';
 
@@ -61,6 +64,8 @@ for (const pair of opts.seed.split(',').filter(Boolean)) {
 if (keys.isEmpty()) bootstrapKey = keys.issue(opts.admin, true, 'main', { owner: true });
 
 const RUNNER_GRACE_MS = 10 * 60 * 1000;
+// While bounties are open, the server re-reads the issues board this often to spot closes.
+const BOUNTY_POLL_MS = Number(process.env.GUILD_BOUNTY_POLL_MS) || 3 * 60 * 1000;
 let ICE_SERVERS;
 try {
   ICE_SERVERS = JSON.parse(opts['ice-servers']);
@@ -112,6 +117,7 @@ function createOffice(officeId, officeName, dataDir) {
   const killOnReconnect = new Set(); // sent home while their runner was away
   const pictures = createPictureStore(path.join(dataDir, 'pictures'), PICTURE_SPOTS);
   let tvSharer = null; // player id sharing their screen on this office's TV (one at a time)
+  const bounties = createBountyStore(path.join(dataDir, 'bounties.json'));
 
   // ---------------------------------------------------------------- persistence
 
@@ -156,6 +162,7 @@ function createOffice(officeId, officeName, dataDir) {
       spawnedAt: l?.spawnedAt ?? null,
       engine: l?.engine ?? p.lastEngine ?? null,
     pty: runner?.pty || null,
+      week: weeklyOf(p, isoWeekId()),
     };
   }
 
@@ -168,6 +175,8 @@ function createOffice(officeId, officeName, dataDir) {
       desks: Object.fromEntries(desks),
       pictures: pictures.list().map(({ spot, file, by, caption, at }) => ({ spot, url: `/pictures/${officeId}/${file}`, by, caption, at })),
       tv: { sharer: tvSharer },
+      bounties: Object.values(bounties.data.open).map(({ number, amount, by, title, at, workers }) => ({ number, amount, by, title, at, workers: Object.keys(workers) })),
+      week: bounties.data.week,
     };
   }
 
@@ -225,9 +234,10 @@ function createOffice(officeId, officeName, dataDir) {
 
   // ---------------------------------------------------------------- XP ledger
 
-  function grantXp(agentId, skill, amount, reasons, from) {
+  function grantXp(agentId, skill, amount, reasons, from, bountiesWon = 0) {
     const p = profiles.get(agentId);
     if (!p || amount <= 0) return;
+    addWeekly(p, rollWeek(), amount, bountiesWon);
     const beforeSkill = levelFor(p.xp[skill] || 0);
     const beforeOverall = overallLevel(p.xp);
     p.xp[skill] = (p.xp[skill] || 0) + amount;
@@ -330,6 +340,7 @@ function createOffice(officeId, officeName, dataDir) {
     live.set(profile.id, l);
     desks.set(desk.id, profile.id);
     if (borrowed) profile.stats.borrowed++;
+    noteBountyWork(profile.id, l);
     saveProfiles();
 
     send(runner.ws, {
@@ -481,6 +492,7 @@ function createOffice(officeId, officeName, dataDir) {
         const owner = profiles.get(msg.agentId).owner;
         const borrowed = owner.toLowerCase() !== player.name.toLowerCase();
         l.task = { ...(l.task || {}), kind, text, requestedBy: player.name, borrowed };
+        noteBountyWork(msg.agentId, l);
         send(runners.get(l.runnerId)?.ws, { t: 'prompt', agentId: msg.agentId, text, kind, meta: l.task });
         pushState();
         break;
@@ -591,6 +603,29 @@ function createOffice(officeId, officeName, dataDir) {
       case 'board':
         loadBoard(player, msg.kind, msg.force, msg.area);
         break;
+      case 'bounty': {
+        const number = Number(msg.number);
+        const amount = Number(msg.amount);
+        const item = [...boardCache.entries()].filter(([k]) => k.startsWith('issues:')).flatMap(([, e]) => e.items).find((i) => i.number === number);
+        const problem = bountyProblem({ item, amount, name: player.name, open: bounties.data.open, posts: bounties.data.posts });
+        if (problem) return send(player.ws, { t: 'error', text: problem });
+        const bounty = { number, amount, by: player.name, title: String(item.title || '').slice(0, 200), url: item.url || null, at: Date.now(), workers: {} };
+        // Agents already on it count as workers from now.
+        for (const [agentId, l] of live) if (l.deskId && refersTo(l, number)) recordWork(bounty, agentId, { skill: l.task.kind });
+        bounties.post(bounty);
+        toast(`💰 ${player.name} pinned a ${amount} XP bounty on #${number}: first agent to land it wins`);
+        pushState();
+        break;
+      }
+      case 'bounty-remove': {
+        const bounty = bounties.data.open[Number(msg.number)];
+        if (!bounty) return;
+        if (!sameName(bounty.by, player.name) && !player.admin) return send(player.ws, { t: 'error', text: `Only ${bounty.by} or an admin can take down that bounty.` });
+        bounties.close(bounty.number, { outcome: 'removed', removedBy: player.name });
+        toast(`💰 ${player.name} took down the bounty on #${bounty.number}`);
+        pushState();
+        break;
+      }
       case 'members':
         if (player.admin) send(player.ws, { t: 'members', members: keys.members(officeId) });
         break;
@@ -649,15 +684,75 @@ function createOffice(officeId, officeName, dataDir) {
     const runner = firstRunner();
     if (!runner) return send(player.ws, { t: 'board', kind, area, error: 'No runner connected. Boards are read through a runner (gh for GitHub, the REST API for Azure DevOps).' });
     try {
-      const data = await askRunner(runner, { t: 'board', kind, area });
-      // Older runners answer with a plain list; newer ones add the area paths for ADO.
-      const entry = Array.isArray(data) ? { items: data, at: Date.now() } : { items: data.items || [], areas: data.areas || null, truncated: Boolean(data.truncated), at: Date.now() };
-      boardCache.set(key, entry);
+      const entry = await fetchBoard(runner, kind, area);
       send(player.ws, { t: 'board', kind, area, ...entry });
     } catch (e) {
       send(player.ws, { t: 'board', kind, area, error: e.message });
     }
   }
+
+  async function fetchBoard(runner, kind, area) {
+    const data = await askRunner(runner, { t: 'board', kind, area });
+    // Older runners answer with a plain list; newer ones add the area paths for ADO.
+    const entry = Array.isArray(data) ? { items: data, at: Date.now() } : { items: data.items || [], areas: data.areas || null, truncated: Boolean(data.truncated), at: Date.now() };
+    boardCache.set(`${kind}:${area}`, entry);
+    if (kind === 'issues') checkBounties(entry.items);
+    return entry;
+  }
+
+  // ---------------------------------------------------------------- bounties + weekly board
+
+  const refersTo = (l, number) => l.task?.ref?.type === 'issue' && Number(l.task.ref.number) === number;
+
+  // An agent hired, prompted or finishing a turn on a bountied item joins its workers.
+  function noteBountyWork(agentId, l, { turnEnded = false, prOpened = false } = {}) {
+    const bounty = l.task?.ref?.type === 'issue' && bounties.data.open[Number(l.task.ref.number)];
+    if (!bounty) return;
+    recordWork(bounty, agentId, { skill: l.task.kind, turnEnded, prOpened });
+    bounties.save();
+  }
+
+  // Fresh board items: every bountied item that now shows closed is claimed (or expires).
+  function checkBounties(items) {
+    for (const item of items) {
+      const bounty = bounties.data.open[item.number];
+      if (!bounty || item.state === 'OPEN') continue;
+      const claim = resolveClaim(bounty);
+      const winner = claim && profiles.get(claim.agentId);
+      bounties.close(bounty.number, winner ? { outcome: 'claimed', agentId: winner.id, agentName: winner.name, skill: claim.skill } : { outcome: 'expired' });
+      if (winner) {
+        winner.stats.bounties = (winner.stats.bounties || 0) + 1;
+        grantXp(winner.id, claim.skill, bounty.amount, [`💰 bounty #${bounty.number} +${bounty.amount}`], null, 1);
+        broadcast({ t: 'event', kind: 'bounty', agentId: winner.id, number: bounty.number, amount: bounty.amount, skill: claim.skill });
+        toast(`💰 ${winner.name} (${winner.owner}) landed #${bounty.number} and claimed ${bounty.by}'s ${bounty.amount} XP bounty!`, { tone: 'success' });
+      } else {
+        toast(`💰 The bounty on #${bounty.number} expired: it closed without a guild agent working on it`);
+      }
+      pushState();
+    }
+  }
+
+  // The weekly leaderboard's week; on rollover, remember the week that ended's MVP.
+  function rollWeek() {
+    const now = isoWeekId();
+    const week = bounties.data.week;
+    if (week.id === now) return now;
+    if (week.id) week.mvp = pickMvp(profiles.values(), week.id);
+    week.id = now;
+    bounties.save();
+    pushState();
+    return now;
+  }
+
+  // While bounties are open, re-read the issues board now and then so closes are
+  // noticed even when nobody has the board open.
+  setInterval(() => {
+    rollWeek();
+    const runner = firstRunner();
+    if (!runner || !Object.keys(bounties.data.open).length) return;
+    fetchBoard(runner, 'issues', '').catch(() => {});
+  }, BOUNTY_POLL_MS);
+  rollWeek();
 
   // ---------------------------------------------------------------- runner socket
 
@@ -832,6 +927,7 @@ function createOffice(officeId, officeName, dataDir) {
         }
         const from = l.task?.borrowed ? l.task.requestedBy : null;
         grantXp(msg.agentId, kind, amount, reasons, from);
+        noteBountyWork(msg.agentId, l, { turnEnded: true, prOpened: Boolean(stats.prOpened) });
         break;
       }
       case 'lessons':
