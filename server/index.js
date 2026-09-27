@@ -745,7 +745,7 @@ function inviteLinks(key) {
 
 // ---------------------------------------------------------------- http + ws
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.mp3': 'audio/mpeg' };
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');

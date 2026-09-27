@@ -17,7 +17,7 @@ export function Soundscape() {
 
 // 🔊 in the HUD button row: opens a little panel with the sound toggle and volumes.
 export function SoundButton() {
-  const { on, volume, voiceVolume } = useSound();
+  const { on, volume, voiceVolume, chatter, chatterVolume } = useSound();
   const [open, setOpen] = useState(false);
   const box = useRef();
   useEffect(() => {
@@ -39,6 +39,14 @@ export function SoundButton() {
           <label className="sound-line">
             <span className="muted small">Volume</span>
             <input type="range" min="0" max="1" step="0.05" value={volume} disabled={!on} onChange={(e) => setSound({ volume: +e.target.value })} />
+          </label>
+          <label className="sound-line">
+            <input type="checkbox" checked={chatter} disabled={!on} onChange={(e) => setSound({ chatter: e.target.checked })} />
+            <span className="small">Office chatter</span>
+          </label>
+          <label className="sound-line">
+            <span className="muted small">Chatter</span>
+            <input type="range" min="0" max="1" step="0.05" value={chatterVolume} disabled={!on || !chatter} onChange={(e) => setSound({ chatterVolume: +e.target.value })} />
           </label>
           <label className="sound-line">
             <span className="muted small">Voices</span>

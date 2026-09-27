@@ -1,10 +1,10 @@
-// The office soundscape: a murmur bed, footsteps (yours and everyone else's),
+// The office soundscape: recorded office chatter, footsteps (yours and everyone else's),
 // keyboards at desks where agents are working, and little cues for chat, finished
 // tasks, level-ups and opening a terminal. It reads positions and game state on a
 // timer, so the 3D scene doesn't need to know about sound at all.
 import { useGame, positions, localPlayer } from '../net.js';
-import { audioContext, sfxBus, sfxAudible } from './engine.js';
-import { footstep, keystroke, chatBlip, doneChime, levelUpJingle, whoosh, murmurBuffer } from './synth.js';
+import { audioContext, sfxBus, sfxAudible, useSound } from './engine.js';
+import { footstep, keystroke, chatBlip, doneChime, levelUpJingle, whoosh } from './synth.js';
 import { sfxVolume, panFor, rightVector, surfaceAt } from './mix.js';
 import { deskById } from '../../../shared/layout.js';
 
@@ -24,28 +24,52 @@ export function startSoundscape() {
     return { gain: sfxVolume(me, src), pan: panFor(me, src, rightVector(localPlayer.level)) };
   };
 
+  // Real people talking across a room (a CC0 field recording, see
+  // client/public/sounds/CREDITS.md), cut into a seamless ~14 s loop. Two copies
+  // play offset and at slightly different speeds, so the repeat is hard to spot.
   function startBed(ctx) {
-    const src = ctx.createBufferSource();
-    src.buffer = murmurBuffer(ctx);
-    src.loop = true;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 2000;
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    src.connect(filter).connect(gain).connect(sfxBus());
-    src.start(ctx.currentTime, Math.random() * 5);
-    bed = { src, filter, gain };
+    bed = { loading: true };
+    fetch(`${import.meta.env.BASE_URL}sounds/office-chatter.mp3`)
+      .then((res) => res.arrayBuffer())
+      .then((data) => ctx.decodeAudioData(data))
+      .then((buffer) => {
+        if (!bed?.loading) return; // left the office while it loaded
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 3200;
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        filter.connect(gain).connect(sfxBus());
+        const layers = [
+          { rate: 1, offset: 0, pan: -0.35 },
+          { rate: 0.97, offset: buffer.duration * 0.55, pan: 0.35 },
+        ].map(({ rate, offset, pan }) => {
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.loop = true;
+          src.playbackRate.value = rate;
+          const p = ctx.createStereoPanner();
+          p.pan.value = pan;
+          src.connect(p).connect(filter);
+          src.start(ctx.currentTime, offset);
+          return src;
+        });
+        bed = { layers, filter, gain };
+      })
+      .catch(() => (bed = { failed: true })); // no chatter is better than an error
   }
 
   function updateBed(ctx) {
+    if (!bed.gain) return;
     const { players, agents } = useGame.getState();
-    // A fuller office murmurs a little louder; the glass corner office muffles it.
+    const { chatter, chatterVolume } = useSound.getState();
+    // A fuller office sounds a little busier; the glass corner office muffles it.
     const busy = players.length + Object.values(agents).filter((a) => a.status === 'working').length;
-    const level = 0.45 + 0.55 * Math.min(1, busy / 8);
+    const level = 0.55 + 0.45 * Math.min(1, busy / 8);
     const up = localPlayer.level === 'mezz';
-    bed.gain.gain.setTargetAtTime(level * (up ? 0.7 : 1), ctx.currentTime, 0.8);
-    bed.filter.frequency.setTargetAtTime(up ? 650 : 2000, ctx.currentTime, 0.5);
+    const target = chatter ? chatterVolume * level * (up ? 0.6 : 1) : 0;
+    bed.gain.gain.setTargetAtTime(target, ctx.currentTime, chatter ? 0.8 : 0.15);
+    bed.filter.frequency.setTargetAtTime(up ? 900 : 3200, ctx.currentTime, 0.5);
   }
 
   // Count distance walked and play a step every STRIDE. Big jumps (spawning,
@@ -164,10 +188,13 @@ export function startSoundscape() {
   return () => {
     clearInterval(timer);
     unsub();
-    try {
-      bed?.src.stop();
-    } catch {}
-    bed?.gain.disconnect();
+    for (const src of bed?.layers || []) {
+      try {
+        src.stop();
+      } catch {}
+    }
+    bed?.gain?.disconnect();
+    bed = null;
   };
 }
 

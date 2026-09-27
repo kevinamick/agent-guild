@@ -19,6 +19,9 @@ export const useSound = create(() => ({
   on: saved.on !== false,
   volume: typeof saved.volume === 'number' ? saved.volume : 0.5,
   voiceVolume: typeof saved.voiceVolume === 'number' ? saved.voiceVolume : 1,
+  // The background office chatter, separate from footsteps and cues.
+  chatter: saved.chatter !== false,
+  chatterVolume: typeof saved.chatterVolume === 'number' ? saved.chatterVolume : 0.6,
   running: false, // the AudioContext is unlocked and playing
 }));
 
@@ -65,9 +68,9 @@ export function unlockAudio() {
 
 export function setSound(patch) {
   useSound.setState(patch);
-  const { on, volume, voiceVolume } = useSound.getState();
+  const { on, volume, voiceVolume, chatter, chatterVolume } = useSound.getState();
   try {
-    localStorage.setItem(SAVED, JSON.stringify({ on, volume, voiceVolume }));
+    localStorage.setItem(SAVED, JSON.stringify({ on, volume, voiceVolume, chatter, chatterVolume }));
   } catch {}
   applyVolumes();
 }
