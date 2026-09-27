@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useGame, send, openModal, closeModal, signOut } from '../net.js';
+import { useGame, send, openModal, closeModal, signOut, requestBoard, setBoardArea } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { LevelBadge, XpBar, SkillChips, EngineChip } from './Hud.jsx';
 import { useHost } from '../host.js';
@@ -69,7 +69,8 @@ export function BoardModal({ kind }) {
   const agents = useGame((s) => s.agents);
   const host = useHost();
   const [selected, setSelected] = useState(null);
-  useEffect(() => send({ t: 'board', kind }), [kind]);
+  const boardArea = useGame((s) => s.boardArea || '');
+  useEffect(() => requestBoard(kind), [kind]);
 
   const activeRefs = useMemo(
     () => new Set(Object.values(agents).filter((a) => a.deskId && a.task?.ref).map((a) => `${a.task.ref.type}:${a.task.ref.number}`)),
@@ -83,7 +84,21 @@ export function BoardModal({ kind }) {
     <Modal title={title} wide className="board-modal">
       <div className="board-toolbar">
         <span className="muted small">{board?.at ? `Updated ${ago(board.at)}` : board?.error ? '' : 'Loading…'}</span>
-        <button className="btn" onClick={() => send({ t: 'board', kind, force: true })}>🔄 Refresh</button>
+        {kind === 'issues' && host.ado && (board?.areas?.length > 0 || boardArea) && (
+          <label className="area-filter">
+            <span className="muted small">Area</span>
+            <select className="input" value={boardArea} onChange={(e) => setBoardArea(e.target.value)}>
+              <option value="">All areas</option>
+              {(board?.areas || [boardArea]).map((a) => (
+                <option key={a} value={a}>
+                  {a.split('\\').map((_, i) => (i ? '\u00a0\u00a0' : '')).join('')}
+                  {a.split('\\').pop()}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button className="btn" onClick={() => requestBoard(kind, { force: true })}>🔄 Refresh</button>
       </div>
       {board?.error && <div className="error-box">{board.error}</div>}
       <div className="columns">
@@ -101,6 +116,7 @@ export function BoardModal({ kind }) {
                       <div className="card-num">
                         {kind === 'prs' ? host.prRef(item.number) : `#${item.number}`}
                         {item.type && <span>{item.type}</span>}
+                        {item.areaPath && <span className="area-chip" title={item.areaPath}>{item.areaPath.split('\\').pop()}</span>}
                         {item.stateName && item.state === 'OPEN' && <span>· {item.stateName}</span>}
                         {item.mergeable === 'CONFLICTING' && <span className="warn-tag">⚠️ conflicts</span>}
                       </div>

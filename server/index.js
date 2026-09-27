@@ -509,7 +509,7 @@ function createOffice(officeId, officeName, dataDir) {
         break;
       }
       case 'board':
-        loadBoard(player, msg.kind, msg.force);
+        loadBoard(player, msg.kind, msg.force, msg.area);
         break;
       case 'members':
         if (player.admin) send(player.ws, { t: 'members', members: keys.members(officeId) });
@@ -558,19 +558,24 @@ function createOffice(officeId, officeName, dataDir) {
     }
   }
 
-  async function loadBoard(player, kind, force) {
+  // Boards are read through a runner. Azure DevOps work items can be narrowed to an
+  // area path (the runner checks it against the project's area tree).
+  async function loadBoard(player, kind, force, rawArea) {
     if (kind !== 'issues' && kind !== 'prs') return;
-    const cached = boardCache.get(kind);
-    if (cached && !force && Date.now() - cached.at < 15000) return send(player.ws, { t: 'board', kind, ...cached });
+    const area = kind === 'issues' ? String(rawArea || '').slice(0, 256) : '';
+    const key = `${kind}:${area}`;
+    const cached = boardCache.get(key);
+    if (cached && !force && Date.now() - cached.at < 15000) return send(player.ws, { t: 'board', kind, area, ...cached });
     const runner = firstRunner();
-    if (!runner) return send(player.ws, { t: 'board', kind, error: 'No runner connected. Boards are read through a runner (gh for GitHub, the REST API for Azure DevOps).' });
+    if (!runner) return send(player.ws, { t: 'board', kind, area, error: 'No runner connected. Boards are read through a runner (gh for GitHub, the REST API for Azure DevOps).' });
     try {
-      const items = await askRunner(runner, { t: 'board', kind });
-      const entry = { items, at: Date.now() };
-      boardCache.set(kind, entry);
-      send(player.ws, { t: 'board', kind, ...entry });
+      const data = await askRunner(runner, { t: 'board', kind, area });
+      // Older runners answer with a plain list; newer ones add the area paths for ADO.
+      const entry = Array.isArray(data) ? { items: data, at: Date.now() } : { items: data.items || [], areas: data.areas || null, at: Date.now() };
+      boardCache.set(key, entry);
+      send(player.ws, { t: 'board', kind, area, ...entry });
     } catch (e) {
-      send(player.ws, { t: 'board', kind, error: e.message });
+      send(player.ws, { t: 'board', kind, area, error: e.message });
     }
   }
 

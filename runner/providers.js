@@ -137,6 +137,7 @@ export function adoWorkItemToItem(wi, p) {
     state: CLOSED_STATES.has(stateName.toLowerCase()) ? 'CLOSED' : 'OPEN',
     stateName,
     type: f['System.WorkItemType'] || 'Work item',
+    areaPath: f['System.AreaPath'] || null,
     author: { login: f['System.CreatedBy']?.displayName || f['System.CreatedBy'] || 'someone' },
     createdAt: f['System.CreatedDate'],
     body: htmlToText(f['System.Description'] || f['Microsoft.VSTS.TCM.ReproSteps'] || ''),
@@ -160,28 +161,58 @@ export function htmlToText(html) {
     .trim();
 }
 
-async function adoBoard(kind, p) {
+// Area paths as work items store them ("Project\\Team\\Sub"). The API's own
+// `path` field has a leading backslash and an extra "\\Area\\" segment, so the
+// paths are rebuilt from node names instead.
+export function flattenAreas(node, prefix = '') {
+  if (!node?.name) return [];
+  const path = prefix ? `${prefix}\\${node.name}` : node.name;
+  return [path, ...(node.children || []).flatMap((c) => flattenAreas(c, path))];
+}
+
+// WIQL for "under this area". Only paths from the project's own area tree are
+// accepted, and quotes are doubled, so a filter can never change the query.
+export function areaClause(area, areas) {
+  if (!area) return '';
+  if (!areas.includes(area)) throw new Error(`"${area}" isn't an area path in this project.`);
+  return ` AND [System.AreaPath] UNDER '${area.replace(/'/g, "''")}'`;
+}
+
+const areaCache = new Map(); // project url -> { list, until }
+async function adoAreas(p) {
+  const key = base(p);
+  const hit = areaCache.get(key);
+  if (hit && hit.until > Date.now()) return hit.list;
+  const root = await adoFetch(`${key}/_apis/wit/classificationnodes/Areas?$depth=10&api-version=7.1`, p);
+  const list = flattenAreas(root);
+  areaCache.set(key, { list, until: Date.now() + 5 * 60 * 1000 });
+  return list;
+}
+
+async function adoBoard(kind, p, { area } = {}) {
   if (kind === 'prs') {
     const data = await adoFetch(`${base(p)}/_apis/git/repositories/${encodeURIComponent(p.repo)}/pullrequests?searchCriteria.status=all&$top=60&api-version=7.1`, p);
     return (data.value || []).map((pr) => adoPrToItem(pr, p));
   }
+  const areas = await adoAreas(p);
   const wiql = await adoFetch(`${base(p)}/_apis/wit/wiql?$top=60&api-version=7.1`, p, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      query: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.WorkItemType] NOT IN ('Test Case', 'Test Plan', 'Test Suite', 'Shared Steps') ORDER BY [System.ChangedDate] DESC",
+      query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.WorkItemType] NOT IN ('Test Case', 'Test Plan', 'Test Suite', 'Shared Steps')${areaClause(area, areas)} ORDER BY [System.ChangedDate] DESC`,
     }),
   });
   const ids = (wiql.workItems || []).map((w) => w.id).slice(0, 60);
-  if (!ids.length) return [];
-  const fields = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.CreatedBy', 'System.CreatedDate', 'System.Description', 'System.Tags', 'Microsoft.VSTS.TCM.ReproSteps'];
+  if (!ids.length) return { items: [], areas };
+  const fields = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.AreaPath', 'System.CreatedBy', 'System.CreatedDate', 'System.Description', 'System.Tags', 'Microsoft.VSTS.TCM.ReproSteps'];
   const items = await adoFetch(`${base(p)}/_apis/wit/workitems?ids=${ids.join(',')}&fields=${fields.join(',')}&errorPolicy=omit&api-version=7.1`, p);
-  return (items.value || []).filter(Boolean).map((wi) => adoWorkItemToItem(wi, p));
+  return { items: (items.value || []).filter(Boolean).map((wi) => adoWorkItemToItem(wi, p)), areas };
 }
 
-export async function loadBoard(provider, kind, cwd) {
+// Returns an array of items, or { items, areas } for Azure DevOps work items.
+export async function loadBoard(provider, kind, cwd, { area } = {}) {
   if (!provider) throw new Error('This repo has no GitHub or Azure DevOps remote, so there are no boards to show.');
-  return provider.type === 'ado' ? adoBoard(kind, provider) : githubBoard(kind, cwd);
+  return provider.type === 'ado' ? adoBoard(kind, provider, { area }) : githubBoard(kind, cwd);
 }
 
 // Commands that earn PR bonuses, for either host.

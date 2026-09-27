@@ -490,7 +490,7 @@ async function onMessage(msg) {
       return send({ t: 'reply', reqId: msg.reqId, data: fs.existsSync(agentDir(msg.agentId)) ? readPlaybooks(agentDir(msg.agentId)) : {} });
     case 'board':
       try {
-        send({ t: 'reply', reqId: msg.reqId, data: await loadBoard(provider, msg.kind, REPO_DIR) });
+        send({ t: 'reply', reqId: msg.reqId, data: await loadBoard(provider, msg.kind, REPO_DIR, { area: msg.area || '' }) });
       } catch (e) {
         send({ t: 'reply', reqId: msg.reqId, error: (e.stderr || e.message || 'could not load the board').toString().trim().split('\n')[0] });
       }

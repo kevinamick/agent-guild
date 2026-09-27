@@ -85,3 +85,24 @@ test('sign-in messages say which credential was rejected', () => {
   assert.match(signInMessage('az', 'contoso'), /rejected the token from your `az login`.*--tenant/);
   assert.match(signInMessage(null, 'contoso', "`az` isn't on PATH"), /needs sign-in.*az login.*isn't on PATH/);
 });
+
+import { flattenAreas, areaClause } from './providers.js';
+
+test('area paths come out as work items store them', () => {
+  const tree = { name: 'Web', path: '\\Web\\Area', children: [{ name: 'Checkout', children: [{ name: 'Payments' }] }, { name: "O'Hare Team" }] };
+  assert.deepEqual(flattenAreas(tree), ['Web', 'Web\\Checkout', 'Web\\Checkout\\Payments', "Web\\O'Hare Team"]);
+  assert.deepEqual(flattenAreas(null), []);
+});
+
+test('area filters only accept known paths and can never break the query', () => {
+  const areas = ['Web', 'Web\\Checkout', "Web\\O'Hare Team"];
+  assert.equal(areaClause('', areas), '');
+  assert.equal(areaClause('Web\\Checkout', areas), " AND [System.AreaPath] UNDER 'Web\\Checkout'");
+  assert.equal(areaClause("Web\\O'Hare Team", areas), " AND [System.AreaPath] UNDER 'Web\\O''Hare Team'");
+  assert.throws(() => areaClause("Web' OR 1=1 --", areas), /isn't an area path/);
+});
+
+test('work items carry their area path', () => {
+  const wi = adoWorkItemToItem({ id: 1, fields: { 'System.Title': 't', 'System.State': 'Active', 'System.AreaPath': 'Web\\Checkout' } }, { org: 'o', project: 'p', repo: 'r' });
+  assert.equal(wi.areaPath, 'Web\\Checkout');
+});

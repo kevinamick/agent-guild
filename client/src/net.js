@@ -143,7 +143,11 @@ function handle(msg) {
       retry = 0;
       applyState(msg.state);
       const first = useGame.getState().status !== 'reconnecting';
-      useGame.setState({ status: 'online', me: msg.you, myName: msg.me.name, admin: msg.me.admin, owner: Boolean(msg.me.owner), chat: msg.chat, rtc: msg.rtc });
+      let boardArea = '';
+      try {
+        boardArea = localStorage.getItem(`guild-area:${msg.state.office?.id || 'main'}`) || '';
+      } catch {}
+      useGame.setState({ boardArea, status: 'online', me: msg.you, myName: msg.me.name, admin: msg.me.admin, owner: Boolean(msg.me.owner), chat: msg.chat, rtc: msg.rtc });
       // First visit: open the character creator.
       if (first && !msg.me.avatarChosen) useGame.setState({ modal: { type: 'character', first: true } });
       // After a reconnect, pick the open terminal's stream back up.
@@ -208,6 +212,8 @@ function handle(msg) {
       ptyListeners.get(msg.agentId)?.forEach((fn) => fn(msg.data, true));
       break;
     case 'board':
+      // Ignore a work-items answer for an area filter that's no longer selected.
+      if (msg.kind === 'issues' && (msg.area || '') !== (useGame.getState().boardArea || '')) break;
       useGame.setState((s) => ({ boards: { ...s.boards, [msg.kind]: msg } }));
       break;
     case 'playbook':
@@ -227,6 +233,20 @@ function handle(msg) {
       }
       break;
   }
+}
+
+// Boards. The work-items board can be narrowed to an Azure DevOps area path; the
+// choice is remembered per office and used for every refresh.
+const areaKey = () => `guild-area:${useGame.getState().office?.id || 'main'}`;
+export function requestBoard(kind, { force = false } = {}) {
+  send({ t: 'board', kind, force, ...(kind === 'issues' ? { area: useGame.getState().boardArea || '' } : {}) });
+}
+export function setBoardArea(area) {
+  useGame.setState({ boardArea: area });
+  try {
+    localStorage.setItem(areaKey(), area);
+  } catch {}
+  requestBoard('issues', { force: true });
 }
 
 export const openModal = (modal) => useGame.setState({ modal });

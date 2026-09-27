@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useGame, connect, send, openModal, toast } from './net.js';
+import { useGame, connect, send, openModal, toast, requestBoard } from './net.js';
 import { World, keys } from './scene/World.jsx';
 import { TopLeft, TopRight, InteractionBar, Toasts, Chat } from './ui/Hud.jsx';
 import { TerminalModal } from './ui/Terminal.jsx';
@@ -163,12 +163,12 @@ function Game() {
   useGameKeys();
   const first = useGame((s) => Object.keys(s.agents).length === 0);
   useEffect(() => {
-    send({ t: 'board', kind: 'issues' });
-    send({ t: 'board', kind: 'prs' });
+    requestBoard('issues');
+    requestBoard('prs');
     if (first) setTimeout(() => toast('Tip: walk to a desk with a “+” and press E to hire your first agent'), 1200);
     const t = setInterval(() => {
-      send({ t: 'board', kind: 'issues' });
-      send({ t: 'board', kind: 'prs' });
+      requestBoard('issues');
+      requestBoard('prs');
     }, 60000);
     return () => clearInterval(t);
   }, []);

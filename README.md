@@ -35,6 +35,8 @@ The runner reads the repo's `origin` remote and talks to whichever host it finds
 | agent briefs | `gh issue view`, `gh pr diff`, `gh pr create` | `az boards work-item show`, `az repos pr show`, `az repos pr create --work-items` |
 | PR bonus XP | `gh pr create/merge/review` | `az repos pr create`, `az repos pr update --status completed`, `az repos pr set-vote` |
 
+The work-items board has an **Area** filter listing the project's area paths (each person's choice is remembered per office). It filters in the Azure DevOps query itself (`[System.AreaPath] UNDER '…'`), so quiet areas aren't hidden by the 60-item limit, and only paths from the project's own area tree are accepted.
+
 For agents to open and review ADO pull requests themselves, install the Azure CLI plus its extension (`az extension add --name azure-devops`). It picks up the org and project from the git remote. Work items are closed when their state is Closed, Done, Removed or Resolved; everything else counts as open.
 
 ## How it fits together
