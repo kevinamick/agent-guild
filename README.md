@@ -9,6 +9,7 @@ A multiplayer 3D office for Claude Code agents, inspired by webdevcody's "agent 
 - **XP and levels.** Each agent levels up four skills: 📌 Issue Fixer, 🔍 Reviewer, 🔀 Conflict Resolver and 🧰 Generalist.
 - **Levels make agents stronger.** After each task an agent writes reusable lessons into a per-skill *playbook*, and that playbook is appended to the system prompt of every session it starts. Higher skill levels let it keep more lessons (`3 + 2 × level`, up to 45). A Lv 8 Reviewer brings 19 learned lessons about your repo to a review; a new recruit brings none.
 - **Cosmetics.** Beanie at Lv 3, party hat at 5, top hat at 8, mastery aura at 11, crown at 15, halo at 20. Level badges go bronze → silver → gold → diamond.
+- **Asking before using.** Anyone can watch any agent (read-only terminal, laptop screen, card), but using someone else's agent — borrowing it, prompting it, typing into its terminal, or sending it home — takes the owner's permission. Press **R** (or **🔑 Request access**); the owner answers **Allow once** (until it next goes home), **Always**, or **Deny**, and can take access back on the agent's card. The server enforces this for every action.
 - **Borrowing.** Agents run on their **owner's** machine, with the owner's Claude login and repo checkout. Anyone in the office can hire a coworker's idle agent. Its XP and playbook grow no matter who borrowed it, and the Guild Hall tracks who lends the most.
 
 ## Engines: Claude Code and GitHub Copilot

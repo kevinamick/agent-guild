@@ -133,10 +133,31 @@ async function main() {
   const alice = player(KEYS.Alice);
   await alice.ready;
   await alice.wait((m) => m.t === 'welcome', 'alice welcome');
+
+  // --- someone else's agent: watching is free, using it takes the owner's permission
+  alice.send({ t: 'sub', agentId });
+  const watched = await alice.wait((m) => m.t === 'scrollback' && m.agentId === agentId, 'watch');
+  check(watched.data.length > 0, "Alice can watch Kevin's agent without permission");
+  alice.send({ t: 'prompt', agentId, text: 'do something' });
+  await alice.wait((m) => m.t === 'error' && m.needAccess?.agentId === agentId && /prompt/.test(m.text), 'prompt needs access');
+  alice.send({ t: 'dismiss', agentId });
+  await alice.wait((m) => m.t === 'error' && m.needAccess && /send home/.test(m.text), 'dismiss needs access');
+  check(true, "without permission Alice can't prompt it or send it home");
+  alice.send({ t: 'unsub', agentId });
   kevin.send({ t: 'dismiss', agentId });
   await kevin.wait((m) => m.t === 'state' && agentIn(m, agentId) && !agentIn(m, agentId).deskId, 'agent went home');
   await kevin.wait((m) => m.t === 'screen' && m.agentId === agentId && m.clear, 'screen cleared');
   check(true, "sending the agent home clears its laptop screen");
+  alice.send({ t: 'hire', deskId: 7, agentId, task: { text: 'review pr 2', kind: 'review' }, worktree: false });
+  await alice.wait((m) => m.t === 'error' && m.needAccess && /borrow/.test(m.text), 'borrow needs access');
+  check(true, "Alice can't borrow Kevin's agent without asking");
+  alice.send({ t: 'access-request', agentId });
+  const asked = await kevin.wait((m) => m.t === 'access-requests' && m.requests.some((r) => r.from === 'Alice'), 'Kevin sees the request');
+  alice.send({ t: 'access-decide', id: asked.requests[0].id, decision: 'always' });
+  await alice.wait((m) => m.t === 'error' && /Only Kevin can answer/.test(m.text), 'only the owner answers');
+  kevin.send({ t: 'access-decide', id: asked.requests[0].id, decision: 'once' });
+  await alice.wait((m) => m.t === 'event' && m.kind === 'toast' && /let you use .* until it next goes home/.test(m.text), 'granted once');
+  check(true, "Alice asks, Kevin allows once (only the owner can answer)");
   alice.send({ t: 'hire', deskId: 7, agentId, task: { text: 'review pr 2', kind: 'review' }, worktree: false });
   const xp2 = await alice.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'review', 'review xp', 20000);
   check(xp2.from === 'Alice', `Alice borrowed Kevin's agent; it earned ${xp2.amount} review XP`);
@@ -306,6 +327,18 @@ async function main() {
   check(lw.state.office.name === 'Lab', 'Lab and its key survive the restart');
   check(pictureAt(kevin2, 'l1')?.url === pic.url && !pictureAt(kevin2, 'r2') && lw.state.pictures.length === 1, 'wall pictures survive the restart, each in its own office');
   kevin2.send({ t: 'dismiss', agentId });
+  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId) && !agentIn(m, agentId).deskId && !agentIn(m, agentId).access?.alice, 'once-grant ends');
+  check(true, "an 'allow once' grant ends when the agent goes home");
+  const alice3 = player(KEYS.Alice);
+  await alice3.ready;
+  await alice3.wait((m) => m.t === 'welcome', 'alice back');
+  alice3.send({ t: 'access-request', agentId });
+  const again = await kevin2.wait((m) => m.t === 'access-requests' && m.requests.length, 'second request');
+  kevin2.send({ t: 'access-decide', id: again.requests[0].id, decision: 'always' });
+  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.access?.alice === 'always', 'always grant');
+  kevin2.send({ t: 'access-revoke', agentId, name: 'alice' });
+  await alice3.wait((m) => m.t === 'event' && m.kind === 'toast' && /took back your access/.test(m.text), 'revoked');
+  check(true, "an 'always' grant sticks until the owner takes it back");
   await sleep(300);
 }
 

@@ -18,6 +18,7 @@ export const useGame = create(() => ({
   admin: false,
   owner: false,
   officeList: null,
+  accessRequests: [], // for owners: requests to use their agents
   newOffice: null,
   members: null,
   invite: null,
@@ -164,6 +165,9 @@ function handle(msg) {
     case 'my-links':
       useGame.setState({ myLinks: msg });
       break;
+    case 'access-requests':
+      useGame.setState({ accessRequests: msg.requests || [] });
+      break;
     case 'offices':
       useGame.setState({ officeList: msg.offices });
       break;
@@ -224,7 +228,7 @@ function handle(msg) {
       toast(msg.text, 'error');
       break;
     case 'event':
-      if (msg.kind === 'toast') toast(msg.text);
+      if (msg.kind === 'toast') toast(msg.text, msg.tone);
       if (msg.kind === 'xp') addFx({ kind: 'xp', agentId: msg.agentId, amount: msg.amount, skill: msg.skill, reasons: msg.reasons });
       if (msg.kind === 'levelup') addFx({ kind: 'levelup', agentId: msg.agentId, level: msg.level, skill: msg.skill, overall: msg.overall });
       if (msg.kind === 'done') {

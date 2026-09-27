@@ -4,6 +4,7 @@ import { World, keys } from './scene/World.jsx';
 import { TopLeft, TopRight, InteractionBar, Toasts, Chat } from './ui/Hud.jsx';
 import { TerminalModal } from './ui/Terminal.jsx';
 import { CharacterModal } from './ui/Character.jsx';
+import { AccessRequests, canUseAgent, requestAccess } from './ui/Access.jsx';
 import { BoardModal, HireModal, PromptModal, RosterModal, AgentModal, HelpModal, TeamModal } from './ui/Modals.jsx';
 import { PictureModal, interactPicture } from './ui/PictureModal.jsx';
 import { Soundscape } from './ui/Sound.jsx';
@@ -111,6 +112,12 @@ function interact(key) {
   if (focus.type === 'picture') return interactPicture(key, focus.spot);
   const agent = agents[focus.agentId];
   if (!agent) return;
+  // Someone else's agent: you can watch it (E), but using it takes their permission.
+  if (!canUseAgent(agent, useGame.getState().myName)) {
+    if (key === 'r') requestAccess(agent.id);
+    if (key === 'p' || key === 'x') toast(`${agent.name} is ${agent.owner}'s agent. Press R to ask for access.`);
+    if (key === 'p' || key === 'x' || key === 'r') return;
+  }
   if (key === 'e') openModal({ type: 'terminal', agentId: agent.id });
   if (key === 'p') openModal({ type: 'prompt', agentId: agent.id });
   if (key === 'c') openModal({ type: 'agent', agentId: agent.id });
@@ -133,7 +140,7 @@ function useGameKeys() {
         return;
       }
       if (e.repeat) return;
-      if (['e', 'p', 'x', 'k', 'h', 'c', 'g', '?', 'v'].includes(k)) {
+      if (['e', 'p', 'x', 'k', 'h', 'c', 'g', '?', 'v', 'r'].includes(k)) {
         e.preventDefault();
         interact(k);
       }
@@ -181,6 +188,7 @@ function Game() {
       <FirstPersonOverlay />
       <Chat />
       <Toasts />
+      <AccessRequests />
       <ModalRouter />
       <ReconnectBanner />
       <Soundscape />

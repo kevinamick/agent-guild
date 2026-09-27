@@ -292,3 +292,12 @@ body[data-fp='1'] canvas { touch-action: none; } /* drag-to-look instead of scro
 .area-filter { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; min-width: 0; }
 .area-filter select { width: auto; max-width: min(360px, 50vw); padding: 4px 8px; font-size: 13px; font-family: 'Nunito', sans-serif; }
 .area-chip { font-weight: 800; color: #6d28d9; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* access to other people's agents */
+.access-requests { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); z-index: 130; width: min(420px, calc(100vw - 32px)); padding: 10px 12px; }
+.access-request { padding: 6px 0; border-top: 1px dashed #d8ccb4; font-size: 14px; }
+.access-request:first-of-type { border-top: 0; }
+.access-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.access-card { margin: 12px 0; padding: 8px 10px; border: 2px dashed var(--line); border-radius: 10px; background: #fff; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.grant { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--line); border-radius: 99px; padding: 1px 4px 1px 10px; background: #fff7e8; }
+.grant .icon-btn { width: 22px; height: 22px; }

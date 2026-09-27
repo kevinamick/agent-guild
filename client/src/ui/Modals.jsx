@@ -4,6 +4,7 @@ import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { LevelBadge, XpBar, SkillChips, EngineChip } from './Hud.jsx';
 import { useHost } from '../host.js';
 import { cleanAgentName, sameName, AGENT_NAME_MAX } from '../../../shared/names.js';
+import { canUseAgent, requestAccess, AgentAccess } from './Access.jsx';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -282,7 +283,9 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
                   <span className="muted small">📖 {lessons}/{playbookCapacity(a.skillLevels[kind])} lessons · {a.stats.tasks} tasks</span>
                   <span className="grow" />
                   {i === 0 && a.skillLevels[kind] > 1 && <span className="rec">recommended</span>}
-                  <span className={`owner ${mine(a) ? 'you' : ''}`}>{mine(a) ? 'yours' : `borrow from ${a.owner}`}</span>
+                  <span className={`owner ${mine(a) ? 'you' : ''}`}>
+                    {mine(a) ? 'yours' : canUseAgent(a, myName) ? `✅ ${a.owner} lets you` : `🔒 ${a.owner}'s · ask first`}
+                  </span>
                 </div>
               </div>
             );
@@ -326,7 +329,13 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
         <span className="muted small">Enter to send · Shift+Enter for a new line</span>
         <span className="grow" />
         <button className="btn" onClick={closeModal}>Cancel</button>
-        <button className="btn primary" disabled={effective === 'new' && !haveRunner} onClick={hire}>Hire & start</button>
+        {effective !== 'new' && agents[effective] && !canUseAgent(agents[effective], myName) ? (
+          <button className="btn primary" onClick={() => (requestAccess(effective), closeModal())}>
+            🔑 Ask {agents[effective].owner} for {agents[effective].name}
+          </button>
+        ) : (
+          <button className="btn primary" disabled={effective === 'new' && !haveRunner} onClick={hire}>Hire & start</button>
+        )}
       </div>
     </Modal>
   );
@@ -567,6 +576,8 @@ export function AgentModal({ agentId }) {
           ))}
         </div>
 
+        <AgentAccess agent={agent} />
+
         <div className="cosmetics">
           {COSMETICS.map((c) => (
             <span key={c.id} className={`cosmetic ${agent.level >= c.level ? 'got' : ''}`}>{agent.level >= c.level ? '✓' : '🔒'} {c.label} · Lv {c.level}</span>
@@ -606,6 +617,7 @@ export function HelpModal() {
           <kbd>P</kbd><span>prompt the agent you're next to</span>
           <kbd>K</kbd><span>give kudos (+{KUDOS_XP} XP, once per task)</span>
           <kbd>C</kbd><span>view the agent's card and playbook</span>
+          <kbd>R</kbd><span>ask the owner for access to someone else's agent (you can always watch)</span>
           <kbd>X</kbd><span>send the agent home (it keeps its XP and playbook)</span>
           <kbd>T</kbd><span>chat</span>
           <kbd>M</kbd><span>mute or unmute your mic (after 🎙️ Join voice; you hear people near you)</span>

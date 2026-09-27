@@ -5,11 +5,13 @@ import '@xterm/xterm/css/xterm.css';
 import { useGame, send, onPty, onPtySize, openModal, closeModal } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { LevelBadge, SkillChips, EngineChip } from './Hud.jsx';
+import { canUseAgent, RequestAccessButton } from './Access.jsx';
 import { SKILL_INFO } from '../../../shared/progression.js';
 
 export function TerminalModal({ agentId }) {
   const host = useRef();
   const agent = useGame((s) => s.agents[agentId]);
+  const myName = useGame((s) => s.myName);
   const players = useGame((s) => s.players);
 
   useEffect(() => {
@@ -43,7 +45,11 @@ export function TerminalModal({ agentId }) {
       term.write(data);
     });
     send({ t: 'sub', agentId });
-    term.onData((data) => send({ t: 'input', agentId, data }));
+    // Without access you watch: keystrokes aren't sent (the server refuses them anyway).
+    term.onData((data) => {
+      const { agents, myName } = useGame.getState();
+      if (canUseAgent(agents[agentId], myName)) send({ t: 'input', agentId, data });
+    });
     // Ctrl+] steps away: Esc belongs to Claude Code (interrupt).
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown' && e.ctrlKey && e.key === ']') {
@@ -65,6 +71,7 @@ export function TerminalModal({ agentId }) {
 
   if (!agent) return null;
   const task = agent.task;
+  const allowed = canUseAgent(agent, myName);
   return (
     <div className="modal-backdrop">
       <div className="modal terminal-modal">
@@ -87,14 +94,20 @@ export function TerminalModal({ agentId }) {
         <div className="term-host" ref={host} />
         <div className="modal-foot">
           <span className="muted small">
-            Everyone in the office shares this terminal · <kbd>Ctrl</kbd>+<kbd>]</kbd> to step away
+            {allowed ? 'Everyone with access shares this terminal' : `👀 Watching: ${agent.name} is ${agent.owner}'s agent`} · <kbd>Ctrl</kbd>+<kbd>]</kbd> to step away
             {task?.borrowed && ` · borrowed by ${task.requestedBy}`}
           </span>
           <span className="grow" />
           <SkillChips agent={agent} highlight={task?.kind} />
           <button className="btn" onClick={() => send({ t: 'kudos', agentId })}>👏 Kudos</button>
-          <button className="btn" onClick={() => openModal({ type: 'prompt', agentId })}>💬 Prompt</button>
-          <button className="btn danger" onClick={() => { send({ t: 'dismiss', agentId }); closeModal(); }}>🏠 Send home</button>
+          {allowed ? (
+            <>
+              <button className="btn" onClick={() => openModal({ type: 'prompt', agentId })}>💬 Prompt</button>
+              <button className="btn danger" onClick={() => { send({ t: 'dismiss', agentId }); closeModal(); }}>🏠 Send home</button>
+            </>
+          ) : (
+            <RequestAccessButton agent={agent} label="Request access" />
+          )}
         </div>
       </div>
     </div>

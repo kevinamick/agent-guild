@@ -144,6 +144,8 @@ function createOffice(officeId, officeName, dataDir) {
       stats: p.stats,
       online: Boolean(runner),
       lendable: runner ? runner.lend : false,
+      // Who else may use this agent ({ name: 'session' | 'always' }); the owner always can.
+      access: Object.fromEntries(Object.entries(p.grants || {}).map(([n, g]) => [n, g.type])),
       deskId: l?.deskId ?? null,
       status: l ? (l.runnerId ? l.status : 'offline') : 'home',
       activity: l?.activity ?? '',
@@ -300,6 +302,7 @@ function createOffice(officeId, officeName, dataDir) {
     if (!runner) return send(player.ws, { t: 'error', text: `${profile.owner}'s runner is offline.` });
     const borrowed = profile.owner.toLowerCase() !== player.name.toLowerCase();
     if (borrowed && !runner.lend) return send(player.ws, { t: 'error', text: `${profile.owner} isn't lending agents right now.` });
+    if (borrowed && !canUse(player, profile.id)) return needAccess(player, profile.id, 'borrow');
 
     const kind = SKILLS.includes(task?.kind) ? task.kind : 'general';
     const offered = (runner.engines || []).map((e) => e.id);
@@ -343,6 +346,32 @@ function createOffice(officeId, officeName, dataDir) {
     pushState();
   }
 
+  // ---------------------------------------------------------------- access
+  // Using someone else's agent (borrowing it, prompting it, typing into its terminal,
+  // sending it home) takes its owner's permission. Watching doesn't.
+  const requests = new Map(); // id -> { id, agentId, agentName, from, at }
+
+  function canUse(player, agentId) {
+    const p = profiles.get(agentId);
+    return Boolean(p && (sameName(p.owner, player.name) || p.grants?.[player.name.toLowerCase()]));
+  }
+
+  function needAccess(player, agentId, what) {
+    const p = profiles.get(agentId);
+    send(player.ws, { t: 'error', text: `${p.name} is ${p.owner}'s agent: ask ${p.owner} for access to ${what} it.`, needAccess: { agentId } });
+  }
+
+  const socketsOf = (name) => [...players.values()].filter((pl) => sameName(pl.name, name));
+  const requestsFor = (owner) => [...requests.values()].filter((r) => sameName(profiles.get(r.agentId)?.owner || '', owner));
+  function sendRequests(owner) {
+    for (const pl of socketsOf(owner)) send(pl.ws, { t: 'access-requests', requests: requestsFor(owner) });
+  }
+
+  // "Allow once" lasts until the agent next goes home.
+  function endSessionGrants(p) {
+    for (const [name, g] of Object.entries(p.grants || {})) if (g.type === 'session') delete p.grants[name];
+  }
+
   // Each agent at a desk has a virtual screen mirroring its terminal, drawn on its laptop.
   function dropScreen(agentId, l) {
     l.screen?.dispose();
@@ -363,6 +392,8 @@ function createOffice(officeId, officeName, dataDir) {
     l.task = null;
     l.scrollback = '';
     dropScreen(agentId, l);
+    endSessionGrants(profiles.get(agentId));
+    saveProfiles();
     if (by) toast(`${by} sent ${profiles.get(agentId).name} home`);
     pushState();
   }
@@ -443,6 +474,7 @@ function createOffice(officeId, officeName, dataDir) {
         const l = live.get(msg.agentId);
         const text = String(msg.text || '').trim();
         if (!l?.deskId || !text) return;
+        if (!canUse(player, msg.agentId)) return needAccess(player, msg.agentId, 'prompt');
         const kind = SKILLS.includes(msg.kind) ? msg.kind : l.task?.kind || 'general';
         const owner = profiles.get(msg.agentId).owner;
         const borrowed = owner.toLowerCase() !== player.name.toLowerCase();
@@ -453,12 +485,13 @@ function createOffice(officeId, officeName, dataDir) {
       }
       case 'input': {
         const l = live.get(msg.agentId);
-        if (l?.deskId) send(runners.get(l.runnerId)?.ws, { t: 'input', agentId: msg.agentId, data: String(msg.data) });
+        if (!l?.deskId || !canUse(player, msg.agentId)) return; // watching is read-only
+        send(runners.get(l.runnerId)?.ws, { t: 'input', agentId: msg.agentId, data: String(msg.data) });
         break;
       }
       case 'resize': {
         const l = live.get(msg.agentId);
-        if (!l?.deskId) return;
+        if (!l?.deskId || !canUse(player, msg.agentId)) return; // watchers follow the size, they don't set it
         send(runners.get(l.runnerId)?.ws, { t: 'resize', agentId: msg.agentId, cols: msg.cols | 0, rows: msg.rows | 0 });
         l.screen?.resize(msg.cols | 0, msg.rows | 0);
         break;
@@ -475,8 +508,53 @@ function createOffice(officeId, officeName, dataDir) {
         live.get(msg.agentId)?.viewers.delete(player.id);
         break;
       case 'dismiss':
+        if (!profiles.has(msg.agentId)) return;
+        if (!canUse(player, msg.agentId) && !player.admin) return needAccess(player, msg.agentId, 'send home');
         dismiss(msg.agentId, player.name);
         break;
+      case 'access-request': {
+        const p = profiles.get(msg.agentId);
+        if (!p || canUse(player, p.id)) return;
+        const mine = [...requests.values()].filter((r) => sameName(r.from, player.name));
+        if (mine.some((r) => r.agentId === p.id)) return send(player.ws, { t: 'event', kind: 'toast', text: `You've already asked ${p.owner} about ${p.name}.` });
+        if (mine.length >= 10) return send(player.ws, { t: 'error', text: 'You have too many requests waiting. Wait for answers first.' });
+        const req = { id: crypto.randomUUID(), agentId: p.id, agentName: p.name, from: player.name, at: Date.now() };
+        requests.set(req.id, req);
+        sendRequests(p.owner);
+        const here = socketsOf(p.owner).length > 0;
+        send(player.ws, { t: 'event', kind: 'toast', text: `🔑 Asked ${p.owner} to use ${p.name}.${here ? '' : ` ${p.owner} isn't in the office; they'll see it when they're back.`}` });
+        break;
+      }
+      case 'access-decide': {
+        const req = requests.get(msg.id);
+        const p = req && profiles.get(req.agentId);
+        if (!p) return;
+        if (!sameName(p.owner, player.name)) return send(player.ws, { t: 'error', text: `Only ${p.owner} can answer that.` });
+        requests.delete(req.id);
+        const decision = ['once', 'always', 'deny'].includes(msg.decision) ? msg.decision : 'deny';
+        if (decision !== 'deny') {
+          p.grants = { ...(p.grants || {}), [req.from.toLowerCase()]: { type: decision === 'always' ? 'always' : 'session', by: player.name, at: Date.now() } };
+          saveProfiles();
+        }
+        const text =
+          decision === 'deny'
+            ? `🚫 ${p.owner} said no to using ${p.name}.`
+            : `✅ ${p.owner} let you use ${p.name}${decision === 'always' ? '' : ' until it next goes home'}.`;
+        for (const pl of socketsOf(req.from)) send(pl.ws, { t: 'event', kind: 'toast', text, tone: decision === 'deny' ? 'error' : 'success' });
+        sendRequests(p.owner);
+        pushState();
+        break;
+      }
+      case 'access-revoke': {
+        const p = profiles.get(msg.agentId);
+        const who = String(msg.name || '').toLowerCase();
+        if (!p || !sameName(p.owner, player.name) || !p.grants?.[who]) return;
+        delete p.grants[who];
+        saveProfiles();
+        for (const pl of socketsOf(who)) send(pl.ws, { t: 'event', kind: 'toast', text: `${p.owner} took back your access to ${p.name}.` });
+        pushState();
+        break;
+      }
       case 'rename': {
         const p = profiles.get(msg.agentId);
         if (!p) return;
@@ -791,6 +869,7 @@ function createOffice(officeId, officeName, dataDir) {
       state: snapshot(), chat, rtc: { iceServers: ICE_SERVERS },
     });
     for (const [agentId, l] of live) if (l.deskId && l.screen) send(ws, { t: 'screen', agentId, ...l.screen.full() });
+    if (requestsFor(name).length) send(ws, { t: 'access-requests', requests: requestsFor(name) });
     if (!previous) toast(`👋 ${name} walked into the office`);
     pushState();
 

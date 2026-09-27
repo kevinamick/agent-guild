@@ -3,6 +3,7 @@ import { useGame, send, openModal } from '../net.js';
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { progress, badgeTier, SKILL_INFO } from '../../../shared/progression.js';
 import { useHost } from '../host.js';
+import { canUseAgent } from './Access.jsx';
 import { PictureBar } from './PictureModal.jsx';
 import { SoundButton } from './Sound.jsx';
 import { VoiceButton, VoicePanel, VoiceBadge } from './Voice.jsx';
@@ -116,6 +117,7 @@ function Workers() {
 export function InteractionBar() {
   const focus = useGame((s) => s.focus);
   const agents = useGame((s) => s.agents);
+  const myName = useGame((s) => s.myName);
   const modal = useGame((s) => s.modal);
   const host = useHost();
   if (!focus || modal) return null;
@@ -136,11 +138,22 @@ export function InteractionBar() {
         </span>
         <EngineChip engine={a.engine} />
         <span className="muted small ellipsis">{a.owner}'s · {a.activity}</span>
-        <Key k="E">Open terminal</Key>
-        <Key k="P">Prompt</Key>
-        <Key k="K">Kudos</Key>
-        <Key k="C">Card</Key>
-        <Key k="X">Send home</Key>
+        {canUseAgent(a, myName) ? (
+          <>
+            <Key k="E">Open terminal</Key>
+            <Key k="P">Prompt</Key>
+            <Key k="K">Kudos</Key>
+            <Key k="C">Card</Key>
+            <Key k="X">Send home</Key>
+          </>
+        ) : (
+          <>
+            <Key k="E">Watch</Key>
+            <Key k="R">🔑 Request access</Key>
+            <Key k="K">Kudos</Key>
+            <Key k="C">Card</Key>
+          </>
+        )}
       </div>
     );
   }
