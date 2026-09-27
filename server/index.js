@@ -660,8 +660,12 @@ function createOffice(officeId, officeName, dataDir) {
   // ---------------------------------------------------------------- runner socket
 
   function onRunnerHello(runner, msg) {
+    const replaced = new Set();
     for (const other of runners.values()) {
-      if (other !== runner && other.owner.toLowerCase() === runner.owner.toLowerCase()) other.ws.close(4003, 'replaced');
+      if (other !== runner && other.owner.toLowerCase() === runner.owner.toLowerCase()) {
+        replaced.add(other.id);
+        other.ws.close(4003, 'replaced');
+      }
     }
     runner.ready = true;
     runner.repo = msg.repo || null;
@@ -722,10 +726,30 @@ function createOffice(officeId, officeName, dataDir) {
       }
       restored++;
     }
+    // Desks still held for this owner's agents whose sessions didn't come back (the
+    // runner restarted, e.g. to update): those terminals are gone, so free the desks
+    // now rather than showing the agents offline until the grace period runs out.
+    const back = new Set((msg.sessions || []).map((sess) => sess.agentId));
+    const gone = [];
+    for (const [agentId, l] of live) {
+      if (back.has(agentId) || (l.runnerId && !replaced.has(l.runnerId))) continue;
+      if (!sameName(profiles.get(agentId)?.owner, runner.owner)) continue;
+      gone.push(profiles.get(agentId).name);
+      release(agentId, l);
+    }
     saveProfiles();
     send(runner.ws, { t: 'welcome', owner: runner.owner });
+    if (gone.length) toast(`${gone.join(', ')} went home: ${gone.length > 1 ? 'their sessions' : 'the session'} ended when ${runner.owner}'s runner restarted`);
     toast(`🔌 ${runner.owner}'s runner joined${restored ? `, ${restored} agent${restored > 1 ? 's' : ''} back at their desks` : ''}`);
     pushState();
+  }
+
+  // An agent whose session is gone leaves its desk (no runner to tell).
+  function release(agentId, l) {
+    if (l.deskId) desks.delete(l.deskId);
+    dropScreen(agentId, l);
+    endSessionGrants(profiles.get(agentId));
+    live.delete(agentId);
   }
 
   // Agents of a disconnected runner keep their desks for a while so a network blip
@@ -734,9 +758,7 @@ function createOffice(officeId, officeName, dataDir) {
     let changed = false;
     for (const [agentId, l] of live) {
       if (l.runnerId || !l.offlineSince || Date.now() - l.offlineSince < RUNNER_GRACE_MS) continue;
-      if (l.deskId) desks.delete(l.deskId);
-      dropScreen(agentId, l);
-      live.delete(agentId);
+      release(agentId, l);
       changed = true;
     }
     if (changed) pushState();

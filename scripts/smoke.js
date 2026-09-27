@@ -198,7 +198,7 @@ async function main() {
   check(true, "an office's own admin cannot create offices either");
   check(!lee.events.some((m) => m.t === 'screen' && m.agentId === agentId), "Lab never receives the main office's laptop screens");
   KEYS.Lee = lab.key;
-  startRunner('Lee');
+  let leeRunner = startRunner('Lee');
   await lee.wait((m) => m.t === 'state' && m.state.runners.some((r) => r.owner === 'Lee'), 'lab runner online');
   await sleep(300);
   check(!kevin.state.runners.some((r) => r.owner === 'Lee'), "Lee's runner shows up only in Lab");
@@ -209,6 +209,12 @@ async function main() {
   lee.send({ t: 'hire', deskId: 1, task: { text: 'fix issue #9 and open a pr', kind: 'issue' } });
   const labXp = await lee.wait((m) => m.t === 'event' && m.kind === 'xp', 'lab agent xp', 20000);
   check(labXp.amount > 0 && !kevin.events.some((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === labXp.agentId), "Lab's agent earns XP in Lab only");
+  // The runner restarts (e.g. to update): its terminals are gone, so the desk frees up at once.
+  leeRunner.kill('SIGKILL');
+  await lee.wait((m) => m.t === 'state' && agentIn(m, labXp.agentId)?.status === 'offline', 'lab agent offline');
+  leeRunner = startRunner('Lee');
+  await lee.wait((m) => m.t === 'state' && agentIn(m, labXp.agentId) && !agentIn(m, labXp.agentId).deskId, 'desk freed', 20000);
+  check(agentIn(lee, labXp.agentId).online, "after a runner restart, an agent whose session died is back home and hireable, not stuck offline");
   // WebRTC signaling relays to a player in the same office only.
   lee.send({ t: 'rtc', to: kevin.state.players.find((p) => p.name === 'Kevin').id, data: { channel: 'test' } });
   alice.send({ t: 'rtc', to: kevin.state.players.find((p) => p.name === 'Kevin').id, data: { channel: 'voice', sdp: 'x' } });
