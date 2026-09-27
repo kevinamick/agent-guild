@@ -85,10 +85,13 @@ export function customAdapter(cmd) {
 // Windows, the other PATHEXT forms such as the `copilot.cmd` shim npm creates.
 export function resolveBin(bin, { env = process.env, platform = process.platform } = {}) {
   if (bin.includes('/') || bin.includes('\\')) return fs.existsSync(bin) ? bin : null;
-  const exts = ['', '.exe'];
-  if (platform === 'win32') {
-    for (const e of (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';')) if (e && !exts.includes(e.toLowerCase())) exts.push(e.toLowerCase());
-  }
+  // On Windows, launchers (PATHEXT: .exe, .cmd, …) come before extensionless files:
+  // the Azure CLI and npm install an extensionless bash script next to the real
+  // `az.cmd` / `copilot.cmd`, and Windows can't start the script.
+  const exts =
+    platform === 'win32'
+      ? [...new Set((env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase())), '']
+      : ['', '.exe'];
   const sep = platform === 'win32' ? ';' : ':';
   for (const dir of (env.PATH || env.Path || '').split(sep).filter(Boolean)) {
     for (const ext of exts) {
@@ -104,9 +107,32 @@ export function resolveBin(bin, { env = process.env, platform = process.platform
 
 export const onPath = (bin) => Boolean(resolveBin(bin));
 
-// node-pty starts real executables; batch shims (.cmd/.bat) need cmd.exe.
-export function spawnSpec(file, args) {
-  return /\.(cmd|bat)$/i.test(file) ? { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', file, ...args] } : { file, args };
+// Batch files (.cmd/.bat) can only run through cmd.exe, which re-parses its whole
+// command line: paths with spaces break and characters like & | < > % in an
+// argument (say, a task title) would run as commands. So the path and every
+// argument are quoted and cmd's metacharacters escaped with ^, following
+// cross-spawn (MIT). Batch files that forward their arguments with %* (npm shims,
+// az.cmd) have them parsed a second time, so those get escaped twice.
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+
+function cmdEscapeArg(arg, twice) {
+  let a = String(arg)
+    .replace(/(?=(\\+?)?)\1"/g, '$1$1\\"') // backslashes before a quote, then escape the quote
+    .replace(/(?=(\\+?)?)\1$/, '$1$1'); // trailing backslashes, so they don't escape our closing quote
+  a = `"${a}"`.replace(CMD_META, '^$1');
+  return twice ? a.replace(CMD_META, '^$1') : a;
+}
+
+export function spawnSpec(file, args, { env = process.env } = {}) {
+  if (!/\.(cmd|bat)$/i.test(file)) return { file, args };
+  let twice = false;
+  try {
+    twice = /%\*/.test(fs.readFileSync(file, 'utf8'));
+  } catch {}
+  const line = [path.win32.normalize(file).replace(CMD_META, '^$1'), ...args.map((a) => cmdEscapeArg(a, twice))].join(' ');
+  const cmdArgs = ['/d', '/s', '/c', `"${line}"`];
+  // child_process needs windowsVerbatimArguments; node-pty takes the line as a string.
+  return { file: env.ComSpec || env.comspec || 'cmd.exe', args: cmdArgs, commandLine: cmdArgs.join(' '), windowsVerbatimArguments: true };
 }
 
 // Normalize hook payloads: Copilot sends toolName/toolArgs, Claude tool_name/tool_input.

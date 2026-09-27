@@ -364,8 +364,8 @@ async function spawnAgent({ agent, task, worktree, cols, rows, deskId, meta, cli
   const env = { ...baseEnv, ...launch.env };
 
   // Start the file we actually found (e.g. copilot.exe), not just the bare name.
-  const { file, args } = spawnSpec(adapter.path || launch.cmd, launch.args);
-  const term = pty.spawn(file, args, { name: 'xterm-256color', cols: cols || 120, rows: rows || 34, cwd, env });
+  const spec = spawnSpec(adapter.path || launch.cmd, launch.args);
+  const term = pty.spawn(spec.file, spec.commandLine ?? spec.args, { name: 'xterm-256color', cols: cols || 120, rows: rows || 34, cwd, env });
   const s = {
     term, cwd, worktree: wt, turn: null, buf: '', timer: null, screen: '', trustAsked: false,
     scrollback: '', deskId, meta, engine, status: task ? 'starting' : 'ready', activity: '',

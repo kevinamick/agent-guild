@@ -54,9 +54,9 @@ async function githubBoard(kind, cwd) {
 export async function azAccessToken({ exec = run, resolve = resolveBin } = {}) {
   const az = resolve('az');
   if (!az) return { problem: "the Azure CLI (`az`) isn't on the runner's PATH" };
-  const { file, args } = spawnSpec(az, ['account', 'get-access-token', '--resource', ADO_RESOURCE, '--query', 'accessToken', '-o', 'tsv']);
+  const spec = spawnSpec(az, ['account', 'get-access-token', '--resource', ADO_RESOURCE, '--query', 'accessToken', '-o', 'tsv']);
   try {
-    const { stdout } = await exec(file, args, { timeout: 30000, windowsHide: true });
+    const { stdout } = await exec(spec.file, spec.args, { timeout: 30000, windowsHide: true, windowsVerbatimArguments: Boolean(spec.windowsVerbatimArguments) });
     const token = String(stdout).trim();
     return token ? { token } : { problem: '`az account get-access-token` returned no token' };
   } catch (e) {

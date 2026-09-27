@@ -53,11 +53,12 @@ test('az token: missing az, Windows az.cmd, failures and success', async () => {
   let called;
   const ok = await azAccessToken({
     resolve: () => 'C:\\Program Files\\Azure CLI\\wbin\\az.cmd',
-    exec: async (file, args) => ((called = { file, args }), { stdout: 'tok123\n' }),
+    exec: async (file, args, options) => ((called = { file, args, options }), { stdout: 'tok123\n' }),
   });
   assert.equal(ok.token, 'tok123');
   assert.match(called.file, /cmd(\.exe)?$/i, 'az.cmd must go through cmd.exe on Windows');
-  assert.ok(called.args.includes('C:\\Program Files\\Azure CLI\\wbin\\az.cmd') && called.args.includes('get-access-token'));
+  assert.ok(called.options.windowsVerbatimArguments, 'the escaped command line is passed as-is');
+  assert.ok(called.args[3].includes('C:\\Program^ Files\\Azure^ CLI\\wbin\\az.cmd') && called.args[3].includes('get-access-token'));
 
   const failed = await azAccessToken({
     resolve: () => '/usr/bin/az',
