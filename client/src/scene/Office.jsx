@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -6,8 +6,8 @@ import { ROOM, PODS, DESKS, BOARDS, DOOR, MEZZ, STAIRS, WALL_HEIGHT, BOSS_DESK }
 import { noteColor } from '../ui/noteColors.js';
 import { view } from './view.js';
 import { Pictures } from './Pictures.jsx';
-import { useGame, screens } from '../net.js';
-import { screenTexture, drawTerminal } from './terminalTexture.js';
+import { useGame } from '../net.js';
+import { Laptop } from './Laptop.jsx';
 import { Tv } from './Tv.jsx';
 
 const W = ROOM.maxX - ROOM.minX;
@@ -83,48 +83,6 @@ function Chair({ color }) {
   );
 }
 
-// An empty desk's laptop glows faintly; a seated agent's shows its live terminal.
-function Laptop({ active, agentId }) {
-  const screen = useRef();
-  const tex = useMemo(() => (agentId ? screenTexture() : null), [agentId]);
-  useEffect(() => () => tex?.dispose(), [tex]);
-  const drawn = useRef(-1);
-  useFrame(({ clock }) => {
-    if (tex) {
-      const sc = screens.get(agentId);
-      if (sc && sc.version !== drawn.current) {
-        drawTerminal(tex, sc);
-        drawn.current = sc.version;
-      }
-      return;
-    }
-    if (!screen.current) return;
-    screen.current.material.emissiveIntensity = active === 'working' ? 0.5 + Math.sin(clock.elapsedTime * 10) * 0.15 : active ? 0.35 : 0.05;
-  });
-  return (
-    <group>
-      <mesh position={[0, 0.02, 0]} castShadow>
-        <boxGeometry args={[0.7, 0.04, 0.48]} />
-        <meshStandardMaterial color="#cbd5e1" metalness={0.4} roughness={0.4} />
-      </mesh>
-      <group position={[0, 0.02, -0.22]} rotation={[-0.25, 0, 0]}>
-        <mesh position={[0, 0.24, 0]} castShadow>
-          <boxGeometry args={[0.7, 0.48, 0.03]} />
-          <meshStandardMaterial color="#cbd5e1" metalness={0.4} roughness={0.4} />
-        </mesh>
-        <mesh ref={screen} position={[0, 0.24, 0.017]}>
-          <planeGeometry args={[0.64, 0.42]} />
-          {tex ? (
-            <meshBasicMaterial map={tex} toneMapped={false} />
-          ) : (
-            <meshStandardMaterial color="#0f172a" emissive={active ? '#4ade80' : '#1e293b'} emissiveIntensity={0.2} />
-          )}
-        </mesh>
-      </group>
-    </group>
-  );
-}
-
 const CHAIR_COLORS = ['#a78bfa', '#7dd3fc', '#fb923c', '#a3e635', '#f472b6', '#fbbf24'];
 
 function Pod({ pod, occupancy, seats }) {
@@ -150,7 +108,7 @@ function Pod({ pod, occupancy, seats }) {
                 </mesh>
               ))}
               <group position={[0, 0.82, d.ry === 0 ? -0.05 : 0.05]} rotation={[0, d.ry === 0 ? Math.PI : 0, 0]}>
-                <Laptop active={status} agentId={seats[d.id]} />
+                <Laptop agentId={seats[d.id]} />
               </group>
               {i % 3 === 0 && (
                 <mesh position={[0.65, 0.88, 0]} castShadow>

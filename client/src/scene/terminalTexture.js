@@ -2,9 +2,10 @@
 // onto a canvas used as its laptop screen.
 import * as THREE from 'three';
 
-// Same shape as the laptop's screen (0.64 × 0.42), so text isn't squeezed.
+// The laptop's 3:2 display (a Surface Laptop's), so text isn't squeezed.
+export const SCREEN_ASPECT = 3 / 2;
 const W = 1024;
-const H = Math.round((W * 0.42) / 0.64);
+const H = Math.round(W / SCREEN_ASPECT);
 const BG = '#1b1d2e';
 const FG = '#d6deeb';
 const FONT = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
