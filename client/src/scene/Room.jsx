@@ -11,6 +11,7 @@ import { decorKit, box, merge, paint, rng, PALETTE } from './decor.js';
 import { Instanced } from './Instanced.jsx';
 import { Plants } from './Plants.jsx';
 import { view } from './view.js';
+import { useCameraMode } from './cameraMode.js';
 
 const W = ROOM.maxX - ROOM.minX;
 const D = ROOM.maxZ - ROOM.minZ;
@@ -332,6 +333,7 @@ export function glowTexture() {
 // -------------------------------------------------------------------- room
 
 export function Room() {
+  const firstPerson = useCameraMode((s) => s.firstPerson);
   const gl = useThree((s) => s.gl);
   const k = decorKit(gl);
   const hung = useHiddenUpstairs();
@@ -424,11 +426,17 @@ export function Room() {
       <mesh geometry={g.back} material={k.evergreen} receiveShadow />
       <mesh geometry={g.side} material={k.plaster} receiveShadow />
       <mesh geometry={g.skirting} material={k.steel} />
-      <mesh geometry={g.front} material={mats.front} />
-      <mesh geometry={g.door} material={k.steel} />
-      <mesh position={[DOOR.x, 1.45, ROOM.maxZ - 0.02]} rotation={[0, Math.PI, 0]} material={mats.doorGlass}>
-        <planeGeometry args={[3.3, 2.8]} />
-      </mesh>
+      {/* Only in first person: the follow camera hovers right around this wall, so it
+          would keep popping in and out of view as the camera moves. */}
+      {firstPerson && (
+        <>
+          <mesh geometry={g.front} material={mats.front} />
+          <mesh geometry={g.door} material={k.steel} />
+          <mesh position={[DOOR.x, 1.45, ROOM.maxZ - 0.02]} rotation={[0, Math.PI, 0]} material={mats.doorGlass}>
+            <planeGeometry args={[3.3, 2.8]} />
+          </mesh>
+        </>
+      )}
       <mesh geometry={g.windows} material={k.steel} castShadow />
       {WINDOWS.map((w) => (
         <mesh key={w.x0} position={[(w.x0 + w.x1) / 2, (WIN_Y0 + WIN_Y1) / 2, BACK - 0.12]} material={k.glass}>
