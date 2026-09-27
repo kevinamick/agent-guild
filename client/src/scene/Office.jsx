@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -132,7 +132,7 @@ function Pod({ pod, occupancy, seats }) {
   );
 }
 
-function StickyNote({ item, index, color }) {
+function StickyNote({ item, index, color, bounty }) {
   const col = index % 3;
   const row = Math.floor(index / 3);
   return (
@@ -153,11 +153,22 @@ function StickyNote({ item, index, color }) {
           <span>{item.title}</span>
         </div>
       </Html>
+      {bounty && (
+        <group position={[0.52, -0.5, 0.02]} rotation={[0, 0, 0.12]}>
+          <mesh>
+            <planeGeometry args={[0.62, 0.3]} />
+            <meshStandardMaterial color="#facc15" emissive="#facc15" emissiveIntensity={0.4} />
+          </mesh>
+          <Html transform position={[0, 0, 0.01]} scale={0.38} zIndexRange={[4, 0]} style={{ pointerEvents: 'none' }}>
+            <div className="note-bounty-3d">💰 {bounty.amount}</div>
+          </Html>
+        </group>
+      )}
     </group>
   );
 }
 
-function Corkboard({ board, items }) {
+function Corkboard({ board, items, bounties = [] }) {
   const rot = board.side ? [0, Math.PI / 2, 0] : [0, 0, 0];
   return (
     <group position={[board.x, 2.6, board.z]} rotation={rot}>
@@ -173,14 +184,23 @@ function Corkboard({ board, items }) {
         <div className="board-title-3d">{board.label}</div>
       </Html>
       {items.slice(0, 6).map((item, i) => (
-        <StickyNote key={item.number} item={item} index={i} color={noteColor(item, board.id)} />
+        <StickyNote key={item.number} item={item} index={i} color={noteColor(item, board.id)} bounty={bounties.find((b) => b.number === item.number)} />
       ))}
     </group>
   );
 }
 
+// Alternates between the all-time levels and this week's XP (with last week's MVP).
 function GuildHall({ board, agents }) {
-  const top = Object.values(agents).sort((a, b) => b.total - a.total).slice(0, 5);
+  const mvp = useGame((s) => s.week?.mvp);
+  const [weekly, setWeekly] = useState(false);
+  useEffect(() => {
+    const t = setInterval(() => setWeekly((w) => !w), 12000);
+    return () => clearInterval(t);
+  }, []);
+  const top = weekly
+    ? Object.values(agents).filter((a) => a.week?.xp > 0).sort((a, b) => b.week.xp - a.week.xp || b.week.bounties - a.week.bounties).slice(0, 5)
+    : Object.values(agents).sort((a, b) => b.total - a.total).slice(0, 5);
   return (
     <group position={[board.x, 2.6, board.z]} rotation={[0, Math.PI / 2, 0]}>
       <mesh castShadow>
@@ -193,17 +213,18 @@ function GuildHall({ board, agents }) {
       </mesh>
       <Html transform position={[0, 0, 0.1]} scale={0.4} zIndexRange={[4, 0]} style={{ pointerEvents: 'none' }}>
         <div className="guild-3d">
-          <div className="guild-3d-title">🏆 Guild Hall</div>
-          {top.length === 0 && <div className="guild-3d-empty">No agents yet. Hire one at a desk!</div>}
+          <div className="guild-3d-title">{weekly ? '📅 This week' : '🏆 Guild Hall'}</div>
+          {top.length === 0 && <div className="guild-3d-empty">{weekly ? 'No XP earned yet this week.' : 'No agents yet. Hire one at a desk!'}</div>}
           {top.map((a, i) => (
             <div key={a.id} className="guild-3d-row">
               <span>{['🥇', '🥈', '🥉', '4', '5'][i]}</span>
               <span className="dot" style={{ background: a.color }} />
               <b>{a.name}</b>
-              <em>Lv {a.level}</em>
+              <em>{weekly ? `${a.week.xp} XP${a.week.bounties ? ` · 💰${a.week.bounties}` : ''}` : `Lv ${a.level}`}</em>
               <small>{a.owner}</small>
             </div>
           ))}
+          {weekly && mvp && <div className="guild-3d-mvp">⭐ Last week's MVP: <b>{mvp.name}</b> ({mvp.xp} XP)</div>}
         </div>
       </Html>
     </group>
@@ -222,7 +243,10 @@ export function Office() {
   }, [desks, agents]);
 
   const provider = useGame((s) => s.office.provider);
-  const openIssues = (boards.issues?.items || []).filter((i) => i.state === 'OPEN');
+  const bounties = useGame((s) => s.bounties);
+  // Bountied issues are always among the six pinned to the corkboard (biggest first).
+  const bountyOf = (i) => bounties.find((b) => b.number === i.number)?.amount || 0;
+  const openIssues = (boards.issues?.items || []).filter((i) => i.state === 'OPEN').sort((a, b) => bountyOf(b) - bountyOf(a));
   const openPrs = (boards.prs?.items || []).filter((p) => p.state === 'OPEN');
 
   return (
@@ -282,7 +306,7 @@ export function Office() {
       <Stairs />
       <Mezzanine />
 
-      <Corkboard board={provider === 'ado' ? { ...BOARDS[0], label: 'Work Items' } : BOARDS[0]} items={openIssues} />
+      <Corkboard board={provider === 'ado' ? { ...BOARDS[0], label: 'Work Items' } : BOARDS[0]} items={openIssues} bounties={bounties} />
       <Corkboard board={BOARDS[1]} items={openPrs} />
       <GuildHall board={BOARDS[2]} agents={agents} />
       <Pictures />

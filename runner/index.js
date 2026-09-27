@@ -540,6 +540,8 @@ async function onMessage(msg) {
       return send({ t: 'reply', reqId: msg.reqId, data: fs.existsSync(agentDir(msg.agentId)) ? readPlaybooks(agentDir(msg.agentId)) : {} });
     case 'board':
       try {
+        // Test-only (scripts/smoke.js): GUILD_TEST_BOARDS names a JSON file { issues: [...], prs: [...] } served instead of the repo's host.
+        if (process.env.GUILD_TEST_BOARDS) return send({ t: 'reply', reqId: msg.reqId, data: JSON.parse(fs.readFileSync(process.env.GUILD_TEST_BOARDS, 'utf8'))[msg.kind] || [] });
         send({ t: 'reply', reqId: msg.reqId, data: await loadBoard(provider, msg.kind, REPO_DIR, { area: msg.area || '' }) });
       } catch (e) {
         send({ t: 'reply', reqId: msg.reqId, error: (e.stderr || e.message || 'could not load the board').toString().trim().split('\n')[0] });

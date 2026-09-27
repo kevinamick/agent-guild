@@ -38,6 +38,8 @@ export const useGame = create(() => ({
   playbooks: {},
   bubbles: {}, // playerId -> { text, at }
   tv: { sharer: null }, // who is screen sharing on the TV (player id)
+  bounties: [], // open bounties: { number, amount, by, title, at, workers: [agentId] }
+  week: { id: null, mvp: null }, // the weekly leaderboard's ISO week, and last week's MVP
 }));
 
 let socket = null;
@@ -125,7 +127,7 @@ export function toast(text, tone = 'info') {
 function addFx(fx) {
   const id = Math.random().toString(36).slice(2);
   useGame.setState((s) => ({ fx: [...s.fx, { ...fx, id, at: performance.now() }] }));
-  setTimeout(() => useGame.setState((s) => ({ fx: s.fx.filter((f) => f.id !== id) })), fx.kind === 'levelup' ? 3200 : 2400);
+  setTimeout(() => useGame.setState((s) => ({ fx: s.fx.filter((f) => f.id !== id) })), fx.kind === 'bounty' ? 4500 : fx.kind === 'levelup' ? 3200 : 2400);
 }
 
 function applyState(state) {
@@ -135,7 +137,7 @@ function applyState(state) {
   }
   const ids = new Set(state.players.map((p) => p.id));
   for (const id of positions.keys()) if (!ids.has(id)) positions.delete(id);
-  useGame.setState({ office: state.office, players: state.players, runners: state.runners, agents, desks: state.desks, pictures: state.pictures || [], tv: state.tv || { sharer: null } });
+  useGame.setState({ office: state.office, players: state.players, runners: state.runners, agents, desks: state.desks, pictures: state.pictures || [], tv: state.tv || { sharer: null }, bounties: state.bounties || [], week: state.week || { id: null, mvp: null } });
 }
 
 function handle(msg) {
@@ -231,6 +233,7 @@ function handle(msg) {
       if (msg.kind === 'toast') toast(msg.text, msg.tone);
       if (msg.kind === 'xp') addFx({ kind: 'xp', agentId: msg.agentId, amount: msg.amount, skill: msg.skill, reasons: msg.reasons });
       if (msg.kind === 'levelup') addFx({ kind: 'levelup', agentId: msg.agentId, level: msg.level, skill: msg.skill, overall: msg.overall });
+      if (msg.kind === 'bounty') addFx({ kind: 'bounty', agentId: msg.agentId, amount: msg.amount, number: msg.number, skill: msg.skill });
       if (msg.kind === 'done') {
         const a = useGame.getState().agents[msg.agentId];
         if (a) toast(`✅ ${a.name} finished your task`, 'success');

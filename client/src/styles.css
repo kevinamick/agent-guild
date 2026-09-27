@@ -105,11 +105,18 @@ kbd {
 .guild-3d-row b { flex: 1; }
 .guild-3d-row em { font-style: normal; font-weight: 900; color: #fde047; }
 .guild-3d-row small { opacity: 0.7; font-size: 16px; }
+.guild-3d-mvp { margin-top: 8px; text-align: center; font-size: 18px; color: #fde68a; }
+.note-bounty-3d { width: 150px; text-align: center; font: 900 30px 'Nunito', sans-serif; color: #1f2335; }
 .fx-xp { font-weight: 900; font-size: 22px; -webkit-text-stroke: 1px var(--line); animation: rise 2.4s ease-out forwards; white-space: nowrap; }
 @keyframes rise { from { transform: translateY(10px); opacity: 0; } 15% { opacity: 1; } to { transform: translateY(-70px); opacity: 0; } }
 .fx-levelup { text-align: center; font-weight: 900; font-size: 16px; background: linear-gradient(135deg,#fde047,#f97316); border: 3px solid var(--line); border-radius: 14px; padding: 6px 16px; animation: levelup 3.2s ease-out forwards; white-space: nowrap; }
 .fx-levelup-title { font-size: 24px; letter-spacing: 0.06em; }
 @keyframes levelup { 0% { transform: scale(0.2) translateY(0); opacity: 0; } 12% { transform: scale(1.25); opacity: 1; } 25% { transform: scale(1); } 80% { opacity: 1; } 100% { transform: translateY(-60px); opacity: 0; } }
+.fx-bounty { background: linear-gradient(135deg, #fef08a, #facc15 55%, #f59e0b); animation-duration: 4.5s; }
+.bounty-banner { display: flex; align-items: center; gap: 12px; background: linear-gradient(135deg, #fef08a, #facc15 55%, #f59e0b); border: 3px solid var(--line); border-radius: 14px; padding: 8px 18px; box-shadow: var(--shadow); font-weight: 800; font-size: 14px; text-align: center; animation: pop 0.35s ease-out; }
+.bounty-banner b { font-size: 20px; letter-spacing: 0.04em; text-transform: uppercase; }
+.bounty-coins { font-size: 28px; animation: coin 0.9s ease-in-out infinite alternate; }
+@keyframes coin { from { transform: translateY(2px) rotate(-12deg); } to { transform: translateY(-4px) rotate(12deg); } }
 
 /* Modals */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(31, 35, 53, 0.35); display: grid; place-items: center; padding: 16px; z-index: 200; }
@@ -160,6 +167,12 @@ kbd {
 .card-title { font-weight: 900; font-size: 14px; line-height: 1.2; overflow-wrap: anywhere; }
 .card-meta { font-size: 11px; color: #475569; }
 .card-workers { font-size: 11px; font-weight: 800; margin-top: 3px; }
+.card.bountied { box-shadow: 0 2px 0 var(--line), 0 0 0 3px #facc15; }
+.bounty-ribbon { position: absolute; top: -8px; right: -6px; background: #facc15; border: 2px solid var(--line); border-radius: 6px; padding: 0 6px; font-size: 11px; font-weight: 900; transform: rotate(6deg); }
+.bounty-ribbon.inline { position: static; transform: none; font-size: 13px; }
+.bounty-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: -4px 14px 10px; }
+.bounty-btn { background: #fef08a; }
+.bounty-list { margin-top: 10px; }
 .warn-tag { color: #b45309; }
 .add { color: #15803d; font-weight: 800; }
 .del { color: #b91c1c; font-weight: 800; }
