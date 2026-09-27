@@ -6,8 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const hookCommand = (url, event) =>
-  `curl -s -m 2 -X POST -H 'content-type: application/json' --data-binary @- ${url}/${event} >/dev/null 2>&1 || true`;
+// `reply` hooks print the runner's answer, which the CLI adds to the agent's context.
+const hookCommand = (url, event, reply = false) =>
+  `curl -s -m 2 -X POST -H 'content-type: application/json' --data-binary @- ${url}/${event}${reply ? ' 2>/dev/null' : ' >/dev/null 2>&1'} || true`;
 
 export const ADAPTERS = {
   claude: {
@@ -16,7 +17,7 @@ export const ADAPTERS = {
     build({ agent, dir, playbook, hookUrl, instructions, task, opts }) {
       const hooks = {};
       for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification']) {
-        hooks[event] = [{ hooks: [{ type: 'command', command: hookCommand(hookUrl, event) }] }];
+        hooks[event] = [{ hooks: [{ type: 'command', command: hookCommand(hookUrl, event, event === 'UserPromptSubmit') }] }];
       }
       hooks.PreToolUse = [{ matcher: '*', hooks: [{ type: 'command', command: hookCommand(hookUrl, 'PreToolUse') }] }];
       const settingsFile = path.join(dir, 'claude-settings.json');
@@ -31,6 +32,8 @@ export const ADAPTERS = {
       if (task?.text) args.push(task.text);
       return { cmd: 'claude', args, env: {} };
     },
+    // What the UserPromptSubmit hook prints: extra context for this turn.
+    hookReply: (context) => JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context } }),
   },
 
   copilot: {
@@ -47,10 +50,15 @@ export const ADAPTERS = {
       );
       const map = { sessionStart: 'SessionStart', userPromptSubmitted: 'UserPromptSubmit', preToolUse: 'PreToolUse', agentStop: 'Stop', notification: 'Notification' };
       // Copilot runs `bash` on macOS/Linux and `powershell` on Windows.
-      const psCommand = (event) =>
-        `$b = [Console]::In.ReadToEnd(); try { Invoke-RestMethod -Uri '${hookUrl}/${event}' -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 2 | Out-Null } catch {}`;
+      const psCommand = (event, reply) =>
+        reply
+          ? `$b = [Console]::In.ReadToEnd(); try { (Invoke-WebRequest -UseBasicParsing -Uri '${hookUrl}/${event}' -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 2).Content } catch {}`
+          : `$b = [Console]::In.ReadToEnd(); try { Invoke-RestMethod -Uri '${hookUrl}/${event}' -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 2 | Out-Null } catch {}`;
       const hooks = Object.fromEntries(
-        Object.entries(map).map(([ev, ours]) => [ev, [{ type: 'command', bash: hookCommand(hookUrl, ours), powershell: psCommand(ours), timeoutSec: 5 }]]),
+        Object.entries(map).map(([ev, ours]) => {
+          const reply = ours === 'UserPromptSubmit';
+          return [ev, [{ type: 'command', bash: hookCommand(hookUrl, ours, reply), powershell: psCommand(ours, reply), timeoutSec: 5 }]];
+        }),
       );
       fs.writeFileSync(path.join(pluginDir, 'hooks.json'), JSON.stringify({ version: 1, hooks }));
 
@@ -65,6 +73,7 @@ export const ADAPTERS = {
       if (task?.text) args.push('-i', task.text);
       return { cmd: 'copilot', args, env: { COPILOT_CUSTOM_INSTRUCTIONS_DIRS: extraDirs } };
     },
+    hookReply: (context) => JSON.stringify({ additionalContext: context }),
   },
 };
 
@@ -75,6 +84,7 @@ export function customAdapter(cmd) {
     label: path.basename(cmd),
     bin: cmd,
     custom: true,
+    hookReply: (context) => JSON.stringify({ additionalContext: context }),
     build({ task }) {
       return { cmd, args: task?.text ? [task.text] : [], env: {} };
     },

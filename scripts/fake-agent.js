@@ -10,7 +10,9 @@ const NAME = process.env.AGENT_GUILD_AGENT || 'agent';
 const PLAYBOOK = process.env.AGENT_GUILD_PLAYBOOK_DIR;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const hook = (event, body = {}) =>
-  fetch(`${HOOK}/${event}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+  fetch(`${HOOK}/${event}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    .then((r) => r.text())
+    .catch(() => '');
 
 let line = '';
 let busy = false;
@@ -19,7 +21,13 @@ const prompt = () => out('\r\n\x1b[33m❯\x1b[0m ');
 
 async function work(text) {
   busy = true;
-  await hook('UserPromptSubmit', { prompt: text });
+  // Like a real CLI, the prompt hook's answer joins the context: a note naming the
+  // playbook file for this kind of task.
+  const reply = await hook('UserPromptSubmit', { prompt: text });
+  let noted = null;
+  try {
+    noted = JSON.parse(reply).additionalContext?.match(/ to (\S+\.md) as a "- " bullet/)?.[1];
+  } catch {}
   out(`\r\n\x1b[2m${NAME} is thinking…\x1b[0m\r\n`);
   const steps = [['Bash', { command: 'git status' }], ['Read', { file_path: 'README.md' }], ['Edit', { file_path: 'src/app.js' }]];
   if (/open a pr/i.test(text)) steps.push(['Bash', { command: 'gh pr create --fill' }]);
@@ -30,9 +38,10 @@ async function work(text) {
     await sleep(400);
   }
   const kind = /review/i.test(text) ? 'review' : /issue/i.test(text) ? 'issue' : 'general';
-  if (PLAYBOOK) {
-    fs.mkdirSync(PLAYBOOK, { recursive: true });
-    fs.appendFileSync(path.join(PLAYBOOK, `${kind}.md`), `- Lesson from "${text.slice(0, 40)}": run the tests before pushing\n`);
+  const file = noted || (PLAYBOOK && path.join(PLAYBOOK, `${kind}.md`));
+  if (file) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `- Lesson from "${text.slice(0, 40)}": run the tests before pushing\n`);
   }
   out(`\x1b[1mDone:\x1b[0m ${text.slice(0, 60)}\r\n`);
   await hook('Stop', {});

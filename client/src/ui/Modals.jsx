@@ -5,6 +5,7 @@ import { LevelBadge, XpBar, SkillChips, EngineChip } from './Hud.jsx';
 import { useHost } from '../host.js';
 import { cleanAgentName, sameName, AGENT_NAME_MAX } from '../../../shared/names.js';
 import { canUseAgent, requestAccess, AgentAccess } from './Access.jsx';
+import { AreaPicker } from './AreaPicker.jsx';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -86,18 +87,7 @@ export function BoardModal({ kind }) {
       <div className="board-toolbar">
         <span className="muted small">{board?.at ? `Updated ${ago(board.at)}` : board?.error ? '' : 'Loading…'}</span>
         {kind === 'issues' && host.ado && (board?.areas?.length > 0 || boardArea) && (
-          <label className="area-filter">
-            <span className="muted small">Area</span>
-            <select className="input" value={boardArea} onChange={(e) => setBoardArea(e.target.value)}>
-              <option value="">All areas</option>
-              {(board?.areas || [boardArea]).map((a) => (
-                <option key={a} value={a}>
-                  {a.split('\\').map((_, i) => (i ? '\u00a0\u00a0' : '')).join('')}
-                  {a.split('\\').pop()}
-                </option>
-              ))}
-            </select>
-          </label>
+          <AreaPicker areas={board?.areas || (boardArea ? [boardArea] : [])} value={boardArea} onChange={setBoardArea} />
         )}
         <button className="btn" onClick={() => requestBoard(kind, { force: true })}>🔄 Refresh</button>
       </div>

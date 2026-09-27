@@ -483,6 +483,17 @@ function createOffice(officeId, officeName, dataDir) {
         pushState();
         break;
       }
+      // Relabel the work at a desk, e.g. a review typed straight into the terminal of an
+      // agent hired without a brief. XP for the following turns goes to the new skill.
+      case 'task-kind': {
+        const l = live.get(msg.agentId);
+        if (!l?.deskId || !SKILLS.includes(msg.kind)) return;
+        if (!canUse(player, msg.agentId)) return needAccess(player, msg.agentId, 'prompt');
+        l.task = { ...(l.task || {}), kind: msg.kind };
+        send(runners.get(l.runnerId)?.ws, { t: 'meta', agentId: msg.agentId, meta: l.task });
+        pushState();
+        break;
+      }
       case 'input': {
         const l = live.get(msg.agentId);
         if (!l?.deskId || !canUse(player, msg.agentId)) return; // watching is read-only

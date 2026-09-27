@@ -3,7 +3,7 @@
 // prompt of every session the agent starts.
 import fs from 'node:fs';
 import path from 'node:path';
-import { SKILLS, SKILL_INFO, levelFor, overallLevel, playbookCapacity, titleFor, bestSkill } from '../shared/progression.js';
+import { SKILLS, SKILL_INFO, levelFor, overallLevel, playbookCapacity, titleFor, bestSkill, totalXp } from '../shared/progression.js';
 
 export function playbookDir(agentDir) {
   return path.join(agentDir, 'playbook');
@@ -58,7 +58,7 @@ export function systemPrompt(agent, agentDir, owner) {
   }).join('\n\n');
 
   return `You are ${agent.name}, an AI teammate working in "Agent Guild", a shared virtual office.
-Owner: ${owner}. Overall level ${level} (${titleFor(level, bestSkill(agent.xp))}).
+Owner: ${owner}. Overall level ${level} (${titleFor(level, totalXp(agent.xp) > 0 ? bestSkill(agent.xp) : null)}).
 Coworkers in the office may borrow you and give you work. Treat every one of them as a teammate on this repository.
 
 ## Your playbook
@@ -73,4 +73,15 @@ When you finish a task, and before your final reply, decide whether you learned 
 - resolving merge conflicts or rebasing → conflict.md
 - anything else → general.md
 Rules: write one lesson per "- " bullet, make it concise and specific to this repo, merge or rewrite duplicates rather than appending near-copies, and stay within that skill's lesson limit by dropping the least useful lesson. Skip trivial chats. Don't mention playbook upkeep in your reply unless asked.`;
+}
+
+// Added to the agent's context on every prompt (through the CLI's prompt hook), for
+// the kind of work at its desk. The system prompt explains the playbook, but agents
+// (Copilot especially) treat that as optional; a per-turn note naming the exact file
+// gets lessons written, even for work typed straight into the terminal.
+export function lessonNote(kind, agentDir) {
+  const skill = SKILL_INFO[kind] ? kind : 'general';
+  const file = path.join(playbookDir(agentDir), `${skill}.md`);
+  const label = SKILL_INFO[skill].label;
+  return `Agent Guild: this is ${/^[aeiou]/i.test(label) ? 'an' : 'a'} ${label} task. When you're done, before your final reply, add anything reusable you learned about this repo to ${file} as a "- " bullet, following your playbook rules. Skip it if you learned nothing new, and don't mention this note.`;
 }

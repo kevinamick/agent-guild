@@ -321,6 +321,14 @@ async function main() {
   kevin2.send({ t: 'prompt', agentId, text: 'one more task', kind: 'general' });
   const xp3 = await kevin2.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'general', 'xp after restart', 20000);
   check(xp3.amount > 0, 'the restored session still takes prompts and earns XP');
+  // Work typed straight into the terminal keeps the desk's kind; relabel it and the XP follows.
+  kevin2.send({ t: 'task-kind', agentId, kind: 'conflict' });
+  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.task?.kind === 'conflict', 'kind switched');
+  kevin2.send({ t: 'input', agentId, data: 'merge main into my branch\r' });
+  const xp4 = await kevin2.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'conflict', 'conflict xp', 20000);
+  check(xp4.amount > 0, 'switching the task kind sends the next turn\'s XP to that skill');
+  const lessons4 = await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.lessons?.conflict > 0, 'conflict lesson', 10000);
+  check(Boolean(lessons4), 'the agent wrote its lesson to the playbook file the task note named (conflict.md)');
   const lee2 = player(KEYS.Lee);
   await lee2.ready;
   const lw = await lee2.wait((m) => m.t === 'welcome', 'lab after restart');

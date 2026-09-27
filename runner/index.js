@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { emptyXp } from '../shared/progression.js';
-import { lessonCounts, readPlaybooks, systemPrompt, trimPlaybooks, playbookDir } from './playbook.js';
+import { lessonCounts, readPlaybooks, systemPrompt, trimPlaybooks, playbookDir, lessonNote } from './playbook.js';
 import { ADAPTERS, customAdapter, explainMissing, parseCliList, resolveBin, spawnSpec, normalizeHook } from './adapters.js';
 import { latestVersion, newer, npxCacheDir, npxCommand, retireDir, sweepRetired } from './update.js';
 import { detectProvider, loadBoard, PR_COMMANDS } from './providers.js';
@@ -323,13 +323,21 @@ function onHook(agentId, event, body) {
   }
 }
 
+// A new prompt gets a note about lessons for the skill this desk's work levels up.
+function hookReply(agentId, event) {
+  const s = sessions.get(agentId);
+  const adapter = s && ENGINES[s.engine];
+  if (event !== 'UserPromptSubmit' || !adapter?.hookReply) return '';
+  return adapter.hookReply(lessonNote(s.meta?.kind, agentDir(agentId)));
+}
+
 const hookServer = http.createServer((req, res) => {
   const [, kind, secret, agentId, event] = req.url.split('/');
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
-    res.end('ok');
-    if (kind !== 'hook' || secret !== HOOK_SECRET) return;
+    if (kind !== 'hook' || secret !== HOOK_SECRET) return res.end('ok');
+    res.end(hookReply(agentId, event));
     try {
       onHook(agentId, event, normalizeHook(body ? JSON.parse(body) : {}));
     } catch (e) {
@@ -471,6 +479,9 @@ async function onMessage(msg) {
     case 'prompt':
       if (sessions.get(msg.agentId) && msg.meta) sessions.get(msg.agentId).meta = msg.meta;
       return promptAgent(msg.agentId, msg.text);
+    case 'meta':
+      if (sessions.get(msg.agentId)) sessions.get(msg.agentId).meta = msg.meta;
+      return;
     case 'office':
       useOffice(msg.id, msg.name);
       return sendHello(ws.repo);

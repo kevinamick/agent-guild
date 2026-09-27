@@ -122,6 +122,7 @@ kbd {
 .terminal-modal { width: min(1400px, 100%); height: min(860px, calc(100vh - 32px)); }
 .term-host { flex: 1; background: #1b1d2e; padding: 8px 4px 4px 10px; min-height: 0; }
 .kind-tag { font-size: 11px; font-weight: 800; padding: 1px 8px; border-radius: 99px; border: 1.5px solid var(--line); }
+.kind-select { font-family: inherit; color: #1b1d2e; cursor: pointer; }
 .field-label { display: block; font-weight: 900; font-size: 13px; margin: 12px 0 6px; }
 .field-label:first-child { margin-top: 0; }
 .textarea, .input { width: 100%; border: 2px solid var(--line); border-radius: 10px; padding: 8px 10px; font: 600 14px 'JetBrains Mono', monospace; background: #fff; resize: vertical; outline: none; }
@@ -301,3 +302,11 @@ body[data-fp='1'] canvas { touch-action: none; } /* drag-to-look instead of scro
 .access-card { margin: 12px 0; padding: 8px 10px; border: 2px dashed var(--line); border-radius: 10px; background: #fff; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
 .grant { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--line); border-radius: 99px; padding: 1px 4px 1px 10px; background: #fff7e8; }
 .grant .icon-btn { width: 22px; height: 22px; }
+
+/* searchable area picker */
+.area-picker { position: relative; display: inline-flex; align-items: center; gap: 6px; margin-left: auto; min-width: 0; }
+.area-search { width: min(320px, 46vw); padding: 4px 10px; font-size: 13px; font-family: 'Nunito', sans-serif; }
+.area-options { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: min(460px, 80vw); max-height: 320px; overflow: auto; padding: 4px; }
+.area-option { padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.area-option.on { background: #fff1e6; }
+.area-option.current b { color: #6d28d9; }

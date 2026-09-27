@@ -90,11 +90,26 @@ test('Copilot hooks carry both bash and PowerShell commands', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-'));
   ADAPTERS.copilot.build({ agent: { name: 'T' }, dir, playbook: dir, hookUrl: 'http://127.0.0.1:1/hook/s/a', instructions: 'x', task: null, opts: {}, env: {} });
   const hooks = JSON.parse(fs.readFileSync(path.join(dir, 'copilot-plugin', 'hooks.json'), 'utf8')).hooks;
-  for (const entry of Object.values(hooks)) {
+  for (const [event, entry] of Object.entries(hooks)) {
     assert.match(entry[0].bash, /curl .*127\.0\.0\.1/);
-    assert.match(entry[0].powershell, /Invoke-RestMethod -Uri 'http:\/\/127\.0\.0\.1/);
+    assert.match(entry[0].powershell, /Invoke-(RestMethod|WebRequest -UseBasicParsing) -Uri 'http:\/\/127\.0\.0\.1/);
+    // Only the prompt hook prints the runner's answer (the lesson note) back to Copilot.
+    assert.equal(!/>\/dev\/null 2>&1/.test(entry[0].bash), event === 'userPromptSubmitted');
   }
   assert.match(hooks.agentStop[0].powershell, /\/Stop'/);
+  assert.match(hooks.userPromptSubmitted[0].powershell, /\)\.Content/);
+  assert.deepEqual(JSON.parse(ADAPTERS.copilot.hookReply('note')), { additionalContext: 'note' });
+});
+
+test('Claude prints the prompt hook answer as additional context', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-'));
+  ADAPTERS.claude.build({ agent: { name: 'T' }, dir, playbook: dir, hookUrl: 'http://127.0.0.1:1/hook/s/a', instructions: 'x', task: null, opts: {}, env: {} });
+  const hooks = JSON.parse(fs.readFileSync(path.join(dir, 'claude-settings.json'), 'utf8')).hooks;
+  assert.doesNotMatch(hooks.UserPromptSubmit[0].hooks[0].command, /\/dev\/null 2>&1/);
+  assert.match(hooks.Stop[0].hooks[0].command, />\/dev\/null/);
+  const reply = JSON.parse(ADAPTERS.claude.hookReply('note'));
+  assert.equal(reply.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.equal(reply.hookSpecificOutput.additionalContext, 'note');
 });
 
 // Windows, played on any OS: platform 'win32', a fake PATH, and a stub where.exe.
