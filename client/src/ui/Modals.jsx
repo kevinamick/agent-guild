@@ -7,6 +7,7 @@ import { cleanAgentName, sameName, AGENT_NAME_MAX } from '../../../shared/names.
 import { canUseAgent, requestAccess, AgentAccess } from './Access.jsx';
 import { AreaPicker } from './AreaPicker.jsx';
 import { kindFromPrompt } from '../../../shared/worktype.js';
+import { noteColor } from './noteColors.js';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -105,7 +106,7 @@ export function BoardModal({ kind }) {
                 {inCol.map((item) => {
                   const on = workersOn(kind === 'issues' ? 'issue' : 'pr', item.number);
                   return (
-                    <div key={item.number} className={`card ${kind}`} onClick={() => setSelected(item)}>
+                    <div key={item.number} className={`card ${kind}`} style={{ background: noteColor(item, kind) }} onClick={() => setSelected(item)}>
                       <div className="card-num">
                         {kind === 'prs' ? host.prRef(item.number) : `#${item.number}`}
                         {item.type && <span>{item.type}</span>}

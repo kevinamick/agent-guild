@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { ROOM, PODS, DESKS, BOARDS, DOOR, MEZZ, STAIRS, WALL_HEIGHT, BOSS_DESK } from '../../../shared/layout.js';
+import { noteColor } from '../ui/noteColors.js';
 import { view } from './view.js';
 import { Pictures } from './Pictures.jsx';
 import { useGame, screens } from '../net.js';
@@ -177,10 +178,12 @@ function StickyNote({ item, index, color }) {
   const col = index % 3;
   const row = Math.floor(index / 3);
   return (
-    <group position={[-1.9 + col * 1.9, 0.75 - row * 1.35, 0.06]} rotation={[0, 0, ((index * 37) % 7 - 3) * 0.015]}>
+    // In front of the cork (z 0.07), or only the pin and text show.
+    <group position={[-1.9 + col * 1.9, 0.75 - row * 1.35, 0.1]} rotation={[0, 0, ((index * 37) % 7 - 3) * 0.015]}>
       <mesh>
         <planeGeometry args={[1.55, 1.15]} />
-        <meshStandardMaterial color={color} />
+        {/* A little glow keeps post-it colours bright under the office lights. */}
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.3} roughness={0.9} />
       </mesh>
       <mesh position={[0, 0.5, 0.03]}>
         <sphereGeometry args={[0.06, 10, 8]} />
@@ -212,7 +215,7 @@ function Corkboard({ board, items }) {
         <div className="board-title-3d">{board.label}</div>
       </Html>
       {items.slice(0, 6).map((item, i) => (
-        <StickyNote key={item.number} item={item} index={i} color={board.color} />
+        <StickyNote key={item.number} item={item} index={i} color={noteColor(item, board.id)} />
       ))}
     </group>
   );
