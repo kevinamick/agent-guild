@@ -483,17 +483,6 @@ function createOffice(officeId, officeName, dataDir) {
         pushState();
         break;
       }
-      // Relabel the work at a desk, e.g. a review typed straight into the terminal of an
-      // agent hired without a brief. XP for the following turns goes to the new skill.
-      case 'task-kind': {
-        const l = live.get(msg.agentId);
-        if (!l?.deskId || !SKILLS.includes(msg.kind)) return;
-        if (!canUse(player, msg.agentId)) return needAccess(player, msg.agentId, 'prompt');
-        l.task = { ...(l.task || {}), kind: msg.kind };
-        send(runners.get(l.runnerId)?.ws, { t: 'meta', agentId: msg.agentId, meta: l.task });
-        pushState();
-        break;
-      }
       case 'input': {
         const l = live.get(msg.agentId);
         if (!l?.deskId || !canUse(player, msg.agentId)) return; // watching is read-only
@@ -779,6 +768,8 @@ function createOffice(officeId, officeName, dataDir) {
         if (!l.deskId) return;
         l.status = msg.status;
         if (msg.activity !== undefined) l.activity = String(msg.activity).slice(0, 160);
+        // The runner works out what kind of work this is from the prompt and what the agent does.
+        if (SKILLS.includes(msg.kind)) l.task = { ...(l.task || {}), kind: msg.kind };
         if (msg.status === 'working' && msg.newTurn) {
           l.turnId++;
           l.kudosBy.clear();
@@ -806,7 +797,9 @@ function createOffice(officeId, officeName, dataDir) {
         if (stats.prOpened) p.stats.prsOpened++;
         if (stats.prMerged) p.stats.prsMerged++;
         if (stats.reviewed) p.stats.reviews++;
-        const kind = l.task?.kind || 'general';
+        // Runners from 0.4.1 detect the kind per turn; older ones leave it to the desk.
+        const kind = SKILLS.includes(stats.kind) ? stats.kind : l.task?.kind || 'general';
+        if (l.task) l.task.kind = kind;
         const from = l.task?.borrowed ? l.task.requestedBy : null;
         grantXp(msg.agentId, kind, amount, reasons, from);
         break;

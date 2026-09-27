@@ -32,6 +32,16 @@ async function work(text) {
   const steps = [['Bash', { command: 'git status' }], ['Read', { file_path: 'README.md' }], ['Edit', { file_path: 'src/app.js' }]];
   if (/open a pr/i.test(text)) steps.push(['Bash', { command: 'gh pr create --fill' }]);
   if (/review/i.test(text)) steps.push(['Bash', { command: 'gh pr review 2 --comment -b "lgtm"' }]);
+  if (/merge|conflict|rebase/i.test(text)) steps.push(['Bash', { command: 'git merge origin/main' }]);
+  if (/needs? permission/i.test(text)) {
+    // Like Copilot on Windows: hooks stamped with times, arriving out of order.
+    const t = Date.now();
+    await hook('PreToolUse', { tool_name: 'bash', tool_input: { command: 'rm -rf build' }, timestamp: t });
+    await hook('PermissionRequest', { toolName: 'bash', toolInput: { command: 'rm -rf build' }, timestamp: t + 2 });
+    await hook('PreToolUse', { tool_name: 'bash', tool_input: { command: 'rm -rf build' }, timestamp: t + 1 });
+    out('\x1b[33mAllow bash: rm -rf build? (y/n)\x1b[0m\r\n');
+    await sleep(2500);
+  }
   for (const [tool_name, tool_input] of steps) {
     await hook('PreToolUse', { tool_name, tool_input });
     out(`\x1b[32m●\x1b[0m ${tool_name}(${tool_input.command || tool_input.file_path})\r\n`);

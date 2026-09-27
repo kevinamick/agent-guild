@@ -48,7 +48,11 @@ export const ADAPTERS = {
         path.join(pluginDir, 'plugin.json'),
         JSON.stringify({ name: 'agent-guild', version: '1.0.0', description: 'Reports agent status to the Agent Guild office' }),
       );
-      const map = { sessionStart: 'SessionStart', userPromptSubmitted: 'UserPromptSubmit', preToolUse: 'PreToolUse', agentStop: 'Stop', notification: 'Notification' };
+      // permissionRequest comes just before notification when Copilot asks to run something.
+      const map = {
+        sessionStart: 'SessionStart', userPromptSubmitted: 'UserPromptSubmit', preToolUse: 'PreToolUse', agentStop: 'Stop',
+        notification: 'Notification', permissionRequest: 'PermissionRequest',
+      };
       // Copilot runs `bash` on macOS/Linux and `powershell` on Windows.
       const psCommand = (event, reply) =>
         reply
@@ -324,6 +328,7 @@ export function npmShimTarget(file) {
 // Normalize hook payloads: Copilot sends toolName/toolArgs, Claude tool_name/tool_input.
 export function normalizeHook(body) {
   if (body.toolName && !body.tool_name) body.tool_name = body.toolName;
+  if (body.toolInput && !body.tool_input) body.tool_input = body.toolInput;
   if (body.toolArgs && !body.tool_input) {
     body.tool_input = typeof body.toolArgs === 'string' ? safeJson(body.toolArgs) : body.toolArgs;
   }

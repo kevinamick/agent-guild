@@ -6,7 +6,7 @@ import { useGame, send, onPty, onPtySize, openModal, closeModal } from '../net.j
 import { STATUS_COLORS } from '../scene/Characters.jsx';
 import { LevelBadge, SkillChips, EngineChip } from './Hud.jsx';
 import { canUseAgent, RequestAccessButton } from './Access.jsx';
-import { SKILLS, SKILL_INFO } from '../../../shared/progression.js';
+import { SKILL_INFO } from '../../../shared/progression.js';
 
 export function TerminalModal({ agentId }) {
   const host = useRef();
@@ -81,22 +81,8 @@ export function TerminalModal({ agentId }) {
           <LevelBadge level={agent.level} />
           <EngineChip engine={agent.engine} />
           <span className="muted small">{agent.title} · {agent.owner}'s agent</span>
-          {task?.kind && allowed && (
-            // Which skill this work levels up; change it if the task turned out to be something else.
-            <select
-              className="kind-tag kind-select"
-              title="Which skill this task earns XP in"
-              style={{ background: SKILL_INFO[task.kind].color }}
-              value={task.kind}
-              onChange={(e) => send({ t: 'task-kind', agentId, kind: e.target.value })}
-            >
-              {SKILLS.map((s) => (
-                <option key={s} value={s}>{SKILL_INFO[s].icon} {SKILL_INFO[s].label}</option>
-              ))}
-            </select>
-          )}
-          {task?.kind && !allowed && (
-            <span className="kind-tag" style={{ background: SKILL_INFO[task.kind].color }}>
+          {task?.kind && (
+            <span className="kind-tag" title="Detected from what the agent is asked and does; XP goes to this skill" style={{ background: SKILL_INFO[task.kind].color }}>
               {SKILL_INFO[task.kind].icon} {SKILL_INFO[task.kind].label}
             </span>
           )}

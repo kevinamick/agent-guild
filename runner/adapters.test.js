@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveBin, spawnSpec, ADAPTERS, explainMissing, knownDirs, parseCliList, pathDirs } from './adapters.js';
+import { resolveBin, spawnSpec, ADAPTERS, explainMissing, knownDirs, parseCliList, pathDirs, normalizeHook } from './adapters.js';
 
 function dirWith(...files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bins-'));
@@ -97,6 +97,9 @@ test('Copilot hooks carry both bash and PowerShell commands', () => {
     assert.equal(!/>\/dev\/null 2>&1/.test(entry[0].bash), event === 'userPromptSubmitted');
   }
   assert.match(hooks.agentStop[0].powershell, /\/Stop'/);
+  // A permission prompt raises the hand even if Copilot's notification hook never fires.
+  assert.match(hooks.permissionRequest[0].powershell, /\/PermissionRequest'/);
+  assert.match(hooks.notification[0].bash, /\/Notification /);
   assert.match(hooks.userPromptSubmitted[0].powershell, /\)\.Content/);
   assert.deepEqual(JSON.parse(ADAPTERS.copilot.hookReply('note')), { additionalContext: 'note' });
 });
@@ -225,4 +228,10 @@ test('explains what was on PATH when no engine is found', () => {
   assert.match(text, /copilot {2}\(skipped: no \.exe\/\.cmd extension/);
   assert.match(text, /where\.exe copilot: C:\\x\\copilot\.exe/);
   assert.match(text, /claude: no file by that name/);
+});
+
+test('Copilot permission requests carry the tool as toolName/toolInput', () => {
+  const body = normalizeHook({ hookName: 'permissionRequest', toolName: 'edit', toolInput: { file_path: '/r/b.txt' } });
+  assert.equal(body.tool_name, 'edit');
+  assert.equal(body.tool_input.file_path, '/r/b.txt');
 });

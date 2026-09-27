@@ -6,6 +6,7 @@ import { useHost } from '../host.js';
 import { cleanAgentName, sameName, AGENT_NAME_MAX } from '../../../shared/names.js';
 import { canUseAgent, requestAccess, AgentAccess } from './Access.jsx';
 import { AreaPicker } from './AreaPicker.jsx';
+import { kindFromPrompt } from '../../../shared/worktype.js';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -189,8 +190,10 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
   const agents = useGame((s) => s.agents);
   const runners = useGame((s) => s.runners);
   const myName = useGame((s) => s.myName);
-  const [kind, setKind] = useState(initialKind);
   const [text, setText] = useState(initialText);
+  // The brief says what kind of work it is, unless you pick one yourself.
+  const [pickedKind, setKind] = useState(initialKind !== 'general' ? initialKind : null);
+  const kind = pickedKind || kindFromPrompt(text) || 'general';
   const [worktree, setWorktree] = useState(Boolean(initialText) && initialKind !== 'review');
   const mine = (a) => a.owner.toLowerCase() === myName.toLowerCase();
   const haveRunner = runners.some((r) => r.owner.toLowerCase() === myName.toLowerCase());
@@ -231,7 +234,7 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
   return (
     <Modal title={title ? `🤖 Hand ${title} to a worker` : `🪑 Hire for ${deskId ? `Desk ${deskId}` : 'a desk'}`}>
       <div className="modal-body">
-        <label className="field-label">Task type (earns XP in this skill)</label>
+        <label className="field-label">Kind of work <span className="muted small">picks the best agent; XP follows what the agent actually does</span></label>
         <div className="kind-row">
           {SKILLS.map((s) => (
             <button key={s} className={`kind-btn ${kind === s ? 'on' : ''}`} style={{ '--c': SKILL_INFO[s].color }} onClick={() => setKind(s)}>
@@ -334,23 +337,20 @@ export function HireModal({ deskId, kind: initialKind = 'general', title, text: 
 export function PromptModal({ agentId }) {
   const agent = useGame((s) => s.agents[agentId]);
   const [text, setText] = useState('');
-  const [kind, setKind] = useState(agent?.task?.kind || 'general');
   if (!agent) return null;
+  // XP follows the work itself (the runner detects it); this is just a preview.
+  const kind = kindFromPrompt(text) || agent.task?.kind || 'general';
   const submit = () => {
     if (!text.trim()) return;
-    send({ t: 'prompt', agentId, text: text.trim(), kind });
+    send({ t: 'prompt', agentId, text: text.trim() });
     closeModal();
   };
   return (
     <Modal title={`💬 Prompt ${agent.name}`}>
       <div className="modal-body">
-        <div className="kind-row">
-          {SKILLS.map((s) => (
-            <button key={s} className={`kind-btn ${kind === s ? 'on' : ''}`} style={{ '--c': SKILL_INFO[s].color }} onClick={() => setKind(s)}>
-              {SKILL_INFO[s].icon} {SKILL_INFO[s].label} <small>Lv {agent.skillLevels[s]}</small>
-            </button>
-          ))}
-        </div>
+        <p className="muted small">
+          Looks like {SKILL_INFO[kind].icon} <b>{SKILL_INFO[kind].label}</b> work (Lv {agent.skillLevels[kind]}). XP goes to whatever kind of work {agent.name} actually does.
+        </p>
         <textarea
           className="textarea"
           rows={5}

@@ -17,6 +17,7 @@ import { lessonCounts, readPlaybooks, systemPrompt, trimPlaybooks, playbookDir, 
 import { ADAPTERS, customAdapter, explainMissing, parseCliList, resolveBin, spawnSpec, normalizeHook } from './adapters.js';
 import { latestVersion, newer, npxCacheDir, npxCommand, retireDir, sweepRetired } from './update.js';
 import { detectProvider, loadBoard, PR_COMMANDS } from './providers.js';
+import { detectKind, kindFromPrompt, isEditTool } from '../shared/worktype.js';
 
 const run = promisify(execFile);
 const VERSION = createRequire(import.meta.url)('../package.json').version;
@@ -271,6 +272,8 @@ async function removeWorktree(dir) {
 
 // ---------------------------------------------------------------- hooks → status
 
+const ASK_TOOLS = /^(ask_user|askuserquestion|ask_followup_question)$/i;
+
 function describeTool(name, input = {}) {
   if (input.command) return `${name}: ${String(input.command).split('\n')[0]}`;
   if (input.file_path) return `${name}: ${path.basename(input.file_path)}`;
@@ -282,7 +285,14 @@ function describeTool(name, input = {}) {
 function onHook(agentId, event, body) {
   const s = sessions.get(agentId);
   if (!s) return;
+  // Copilot on Windows runs each hook in its own PowerShell, so they can arrive out of
+  // order: a "using a tool" landing after "needs you" would lower the raised hand.
+  // Copilot stamps every hook; a late one still counts toward stats but not status.
+  const at = Number(body.timestamp) || 0;
+  const late = at > 0 && at < (s.hookAt || 0);
+  if (at > (s.hookAt || 0)) s.hookAt = at;
   const status = (status, activity, extra = {}) => {
+    if (late) return;
     if (status !== 'done') s.lastActivity = activity;
     s.status = status;
     s.activity = activity;
@@ -292,14 +302,26 @@ function onHook(agentId, event, body) {
     case 'SessionStart':
       if (!s.turn) status('ready', 'waiting for a prompt');
       break;
-    case 'UserPromptSubmit':
-      s.turn = { start: Date.now(), toolCalls: 0, prOpened: false, prMerged: false, reviewed: false };
-      status('working', String(body.prompt || '').split('\n')[0], { newTurn: true });
+    case 'UserPromptSubmit': {
+      const prompt = String(body.prompt || '');
+      s.turn = newTurn(prompt);
+      // What was asked decides the kind until the work itself says otherwise.
+      const asked = kindFromPrompt(prompt);
+      if (asked) s.meta = { ...s.meta, kind: asked };
+      status('working', prompt.split('\n')[0], { newTurn: true, kind: s.meta?.kind });
       break;
+    }
     case 'PreToolUse': {
-      if (!s.turn) s.turn = { start: Date.now(), toolCalls: 0 };
+      if (!s.turn) s.turn = newTurn('');
       s.turn.toolCalls++;
       const cmd = String(body.tool_input?.command || '');
+      if (cmd && s.turn.commands.length < 60) s.turn.commands.push(cmd.slice(0, 400));
+      if (isEditTool(body.tool_name)) s.turn.edits++;
+      // Asking the user a question is a raised hand, not work.
+      if (ASK_TOOLS.test(String(body.tool_name || ''))) {
+        status('waiting', 'has a question for you');
+        break;
+      }
       if (PR_COMMANDS.opened.test(cmd)) s.turn.prOpened = true;
       if (PR_COMMANDS.merged.test(cmd)) s.turn.prMerged = true;
       if (PR_COMMANDS.reviewed.test(cmd)) s.turn.reviewed = true;
@@ -309,11 +331,20 @@ function onHook(agentId, event, body) {
     case 'Notification':
       status('waiting', body.message || 'needs your input');
       break;
+    case 'PermissionRequest':
+      status('waiting', `needs permission: ${describeTool(body.tool_name || 'a tool', body.tool_input || {})}`);
+      break;
     case 'Stop': {
       const turn = s.turn;
       s.turn = null;
-      status('done', s.lastActivity || 'done');
-      if (turn) send({ t: 'turn', agentId, stats: { ...turn, durationMs: Date.now() - turn.start, start: undefined } });
+      if (turn) {
+        // XP goes to the kind of work this turn turned out to be.
+        const kind = detectKind(turn) || s.meta?.kind || 'general';
+        s.meta = { ...s.meta, kind };
+        const { prompt, commands, edits, start, ...stats } = turn;
+        status('done', s.lastActivity || 'done', { kind });
+        send({ t: 'turn', agentId, stats: { ...stats, kind, durationMs: Date.now() - start } });
+      } else status('done', s.lastActivity || 'done');
       try {
         trimPlaybooks(agentDir(agentId), localAgent(agentId).xp);
         send({ t: 'lessons', agentId, lessons: lessonCounts(agentDir(agentId)) });
@@ -331,18 +362,23 @@ function hookReply(agentId, event) {
   return adapter.hookReply(lessonNote(s.meta?.kind, agentDir(agentId)));
 }
 
+function newTurn(prompt) {
+  return { start: Date.now(), toolCalls: 0, prOpened: false, prMerged: false, reviewed: false, prompt, commands: [], edits: 0 };
+}
+
 const hookServer = http.createServer((req, res) => {
   const [, kind, secret, agentId, event] = req.url.split('/');
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
     if (kind !== 'hook' || secret !== HOOK_SECRET) return res.end('ok');
-    res.end(hookReply(agentId, event));
     try {
       onHook(agentId, event, normalizeHook(body ? JSON.parse(body) : {}));
     } catch (e) {
       log('hook error', e.message);
     }
+    // After onHook, so the note follows the kind this prompt asks for.
+    res.end(hookReply(agentId, event));
   });
 });
 

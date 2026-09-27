@@ -321,12 +321,16 @@ async function main() {
   kevin2.send({ t: 'prompt', agentId, text: 'one more task', kind: 'general' });
   const xp3 = await kevin2.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'general', 'xp after restart', 20000);
   check(xp3.amount > 0, 'the restored session still takes prompts and earns XP');
-  // Work typed straight into the terminal keeps the desk's kind; relabel it and the XP follows.
-  kevin2.send({ t: 'task-kind', agentId, kind: 'conflict' });
-  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.task?.kind === 'conflict', 'kind switched');
+  // Work typed straight into the terminal: nobody says what kind it is, the runner works it out.
   kevin2.send({ t: 'input', agentId, data: 'merge main into my branch\r' });
   const xp4 = await kevin2.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'conflict', 'conflict xp', 20000);
-  check(xp4.amount > 0, 'switching the task kind sends the next turn\'s XP to that skill');
+  check(xp4.amount > 0, 'a merge typed into the terminal earns Conflict Resolver XP, detected from the work');
+  check(agentIn(kevin2, agentId).task?.kind === 'conflict', 'the desk now shows it as conflict work');
+  kevin2.send({ t: 'input', agentId, data: 'this needs permission\r' });
+  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.status === 'waiting', 'hand raised');
+  await sleep(1200);
+  check(agentIn(kevin2, agentId).status === 'waiting' && /needs permission/.test(agentIn(kevin2, agentId).activity), 'a permission request raises the hand, and a late tool hook doesn\'t lower it');
+  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.status === 'done', 'done after permission', 20000);
   const lessons4 = await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.lessons?.conflict > 0, 'conflict lesson', 10000);
   check(Boolean(lessons4), 'the agent wrote its lesson to the playbook file the task note named (conflict.md)');
   const lee2 = player(KEYS.Lee);
