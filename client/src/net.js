@@ -2,6 +2,9 @@ import { create } from 'zustand';
 
 // Positions change every frame, so they live outside React state.
 export const positions = new Map(); // playerId -> { x, y, z, ry }
+// Each seated agent's terminal as the server sees it: { rows, n, cols, version }.
+// Read by the laptops every frame, so kept outside React state like positions.
+export const screens = new Map();
 export const localPlayer = { x: 0, y: 0, z: 11, ry: Math.PI, level: 'ground' };
 // Read-only position for automated UI tests (e.g. walking a scripted route).
 if (typeof window !== 'undefined') Object.defineProperty(window, '__guildPosition', { get: () => ({ ...localPlayer }) });
@@ -170,6 +173,20 @@ function handle(msg) {
         bubbles: { ...s.bubbles, [msg.entry.playerId]: { text: msg.entry.text, at: Date.now() } },
       }));
       break;
+    case 'screen': {
+      if (msg.clear) {
+        screens.delete(msg.agentId);
+        break;
+      }
+      const sc = (!msg.full && screens.get(msg.agentId)) || { rows: [], version: 0 };
+      for (const [i, row] of Object.entries(msg.rows)) sc.rows[+i] = row;
+      sc.rows.length = msg.n;
+      sc.n = msg.n;
+      sc.cols = msg.cols;
+      sc.version++;
+      screens.set(msg.agentId, sc);
+      break;
+    }
     case 'rtc':
       rtcListeners.forEach((fn) => fn(msg.from, msg.data));
       break;

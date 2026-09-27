@@ -112,11 +112,23 @@ async function main() {
   await kevin.wait((m) => m.t === 'state' && agentIn(m, agentId)?.lessons?.issue >= 1, 'lesson recorded');
   check(true, 'playbook lesson counted');
 
+  // --- laptop screens: the office gets each seated agent's live terminal (changed rows only)
+  const screenText = (msgs) => msgs.filter((m) => m.t === 'screen' && m.agentId === agentId && m.rows).flatMap((m) => Object.values(m.rows)).flat().map((r) => r[0]).join('');
+  await kevin.wait((m) => m.t === 'screen' && m.agentId === agentId && m.rows && screenText([m]).includes('fake agent'), 'laptop screen');
+  check(/fake agent/.test(screenText(kevin.events)), "players see the agent's live terminal on its laptop");
+  const late = player(KEYS.Alice);
+  await late.ready;
+  const lateFull = await late.wait((m) => m.t === 'screen' && m.agentId === agentId && m.full, 'full screen for a late joiner');
+  check(lateFull.n > 0 && /fake agent/.test(screenText([lateFull])), 'someone walking in later gets the whole screen at once');
+  late.ws.close();
+
   const alice = player(KEYS.Alice);
   await alice.ready;
   await alice.wait((m) => m.t === 'welcome', 'alice welcome');
   kevin.send({ t: 'dismiss', agentId });
   await kevin.wait((m) => m.t === 'state' && agentIn(m, agentId) && !agentIn(m, agentId).deskId, 'agent went home');
+  await kevin.wait((m) => m.t === 'screen' && m.agentId === agentId && m.clear, 'screen cleared');
+  check(true, "sending the agent home clears its laptop screen");
   alice.send({ t: 'hire', deskId: 7, agentId, task: { text: 'review pr 2', kind: 'review' }, worktree: false });
   const xp2 = await alice.wait((m) => m.t === 'event' && m.kind === 'xp' && m.skill === 'review', 'review xp', 20000);
   check(xp2.from === 'Alice', `Alice borrowed Kevin's agent; it earned ${xp2.amount} review XP`);
@@ -155,6 +167,7 @@ async function main() {
   lee.send({ t: 'create-office', name: 'Another', adminName: 'Lee' });
   await lee.wait((m) => m.t === 'error' && /owner/.test(m.text), 'office admin cannot create offices');
   check(true, "an office's own admin cannot create offices either");
+  check(!lee.events.some((m) => m.t === 'screen' && m.agentId === agentId), "Lab never receives the main office's laptop screens");
   KEYS.Lee = lab.key;
   startRunner('Lee');
   await lee.wait((m) => m.t === 'state' && m.state.runners.some((r) => r.owner === 'Lee'), 'lab runner online');

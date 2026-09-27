@@ -13,6 +13,7 @@ import { createKeyStore } from './keys.js';
 import { createPictureStore } from './pictures.js';
 import { sanitizeAvatar, randomAvatar } from '../shared/avatar.js';
 import { cleanAgentName, sameName } from '../shared/names.js';
+import { createScreen } from './screens.js';
 import {
   SKILLS, SKILL_INFO, KUDOS_XP, emptyXp, levelFor, overallLevel, titleFor, bestSkill, turnXp, totalXp,
 } from '../shared/progression.js';
@@ -307,6 +308,7 @@ function createOffice(officeId, officeName, dataDir) {
       activity: task?.text ? 'reading the brief' : 'booting up',
       task: { kind, title: task?.title || null, text: task?.text || '', requestedBy: player.name, borrowed, ref: task?.ref || null },
       scrollback: '',
+      screen: (live.get(profile.id)?.screen?.dispose(), createScreen(120, 34)),
       viewers: new Set(),
       kudosBy: new Set(),
       turnId: 0,
@@ -334,6 +336,13 @@ function createOffice(officeId, officeName, dataDir) {
     pushState();
   }
 
+  // Each agent at a desk has a virtual screen mirroring its terminal, drawn on its laptop.
+  function dropScreen(agentId, l) {
+    l.screen?.dispose();
+    l.screen = null;
+    broadcast({ t: 'screen', agentId, clear: true });
+  }
+
   function dismiss(agentId, by) {
     const l = live.get(agentId);
     if (!l?.deskId) return;
@@ -346,6 +355,7 @@ function createOffice(officeId, officeName, dataDir) {
     l.activity = '';
     l.task = null;
     l.scrollback = '';
+    dropScreen(agentId, l);
     if (by) toast(`${by} sent ${profiles.get(agentId).name} home`);
     pushState();
   }
@@ -441,7 +451,9 @@ function createOffice(officeId, officeName, dataDir) {
       }
       case 'resize': {
         const l = live.get(msg.agentId);
-        if (l?.deskId) send(runners.get(l.runnerId)?.ws, { t: 'resize', agentId: msg.agentId, cols: msg.cols | 0, rows: msg.rows | 0 });
+        if (!l?.deskId) return;
+        send(runners.get(l.runnerId)?.ws, { t: 'resize', agentId: msg.agentId, cols: msg.cols | 0, rows: msg.rows | 0 });
+        l.screen?.resize(msg.cols | 0, msg.rows | 0);
         break;
       }
       case 'sub': {
@@ -594,7 +606,7 @@ function createOffice(officeId, officeName, dataDir) {
           continue;
         }
         l = {
-          deskId: desk.id, task: sess.meta || { kind: 'general' }, scrollback: '', viewers: new Set(), kudosBy: new Set(),
+          deskId: desk.id, task: sess.meta || { kind: 'general' }, scrollback: '', screen: createScreen(120, 34), viewers: new Set(), kudosBy: new Set(),
           turnId: 0, spawnedAt: 0, lessons: profiles.get(sess.agentId).lessons || {},
         };
         live.set(sess.agentId, l);
@@ -607,6 +619,7 @@ function createOffice(officeId, officeName, dataDir) {
       l.activity = sess.activity || '';
       if (sess.scrollback && sess.scrollback.length > l.scrollback.length) {
         l.scrollback = sess.scrollback.slice(-SCROLLBACK_LIMIT);
+        l.screen?.reset(l.scrollback);
         const data = JSON.stringify({ t: 'scrollback', agentId: sess.agentId, data: l.scrollback });
         for (const pid of l.viewers) players.get(pid)?.ws.send(data);
       }
@@ -625,6 +638,7 @@ function createOffice(officeId, officeName, dataDir) {
     for (const [agentId, l] of live) {
       if (l.runnerId || !l.offlineSince || Date.now() - l.offlineSince < RUNNER_GRACE_MS) continue;
       if (l.deskId) desks.delete(l.deskId);
+      dropScreen(agentId, l);
       live.delete(agentId);
       changed = true;
     }
@@ -645,6 +659,7 @@ function createOffice(officeId, officeName, dataDir) {
     switch (msg.t) {
       case 'pty': {
         l.scrollback = (l.scrollback + msg.data).slice(-SCROLLBACK_LIMIT);
+        l.screen?.write(msg.data);
         const data = JSON.stringify({ t: 'pty', agentId: msg.agentId, data: msg.data });
         for (const pid of l.viewers) {
           const p = players.get(pid);
@@ -747,6 +762,7 @@ function createOffice(officeId, officeName, dataDir) {
       me: { name, admin: ident.admin, owner: player.owner, avatar, avatarChosen: Boolean(avatar.chosen) },
       state: snapshot(), chat, rtc: { iceServers: ICE_SERVERS },
     });
+    for (const [agentId, l] of live) if (l.deskId && l.screen) send(ws, { t: 'screen', agentId, ...l.screen.full() });
     if (!previous) toast(`👋 ${name} walked into the office`);
     pushState();
 
@@ -768,6 +784,15 @@ function createOffice(officeId, officeName, dataDir) {
       pushState();
     });
   }
+
+  // Laptop screens: twice a second, send each office the rows that changed.
+  setInterval(() => {
+    if (!players.size) return;
+    for (const [agentId, l] of live) {
+      const changes = l.deskId && l.screen?.changes();
+      if (changes) broadcast({ t: 'screen', agentId, ...changes });
+    }
+  }, 500);
 
   // Movement fan-out at 12 Hz.
   setInterval(() => {

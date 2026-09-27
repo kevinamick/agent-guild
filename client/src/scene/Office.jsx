@@ -1,11 +1,12 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { ROOM, PODS, DESKS, BOARDS, DOOR, MEZZ, STAIRS, WALL_HEIGHT, BOSS_DESK } from '../../../shared/layout.js';
 import { view } from './view.js';
 import { Pictures } from './Pictures.jsx';
-import { useGame } from '../net.js';
+import { useGame, screens } from '../net.js';
+import { screenTexture, drawTerminal } from './terminalTexture.js';
 import { Tv } from './Tv.jsx';
 
 const W = ROOM.maxX - ROOM.minX;
@@ -81,9 +82,21 @@ function Chair({ color }) {
   );
 }
 
-function Laptop({ active }) {
+// An empty desk's laptop glows faintly; a seated agent's shows its live terminal.
+function Laptop({ active, agentId }) {
   const screen = useRef();
+  const tex = useMemo(() => (agentId ? screenTexture() : null), [agentId]);
+  useEffect(() => () => tex?.dispose(), [tex]);
+  const drawn = useRef(-1);
   useFrame(({ clock }) => {
+    if (tex) {
+      const sc = screens.get(agentId);
+      if (sc && sc.version !== drawn.current) {
+        drawTerminal(tex, sc);
+        drawn.current = sc.version;
+      }
+      return;
+    }
     if (!screen.current) return;
     screen.current.material.emissiveIntensity = active === 'working' ? 0.5 + Math.sin(clock.elapsedTime * 10) * 0.15 : active ? 0.35 : 0.05;
   });
@@ -100,7 +113,11 @@ function Laptop({ active }) {
         </mesh>
         <mesh ref={screen} position={[0, 0.24, 0.017]}>
           <planeGeometry args={[0.64, 0.42]} />
-          <meshStandardMaterial color="#0f172a" emissive={active ? '#4ade80' : '#1e293b'} emissiveIntensity={0.2} />
+          {tex ? (
+            <meshBasicMaterial map={tex} toneMapped={false} />
+          ) : (
+            <meshStandardMaterial color="#0f172a" emissive={active ? '#4ade80' : '#1e293b'} emissiveIntensity={0.2} />
+          )}
         </mesh>
       </group>
     </group>
@@ -109,7 +126,7 @@ function Laptop({ active }) {
 
 const CHAIR_COLORS = ['#a78bfa', '#7dd3fc', '#fb923c', '#a3e635', '#f472b6', '#fbbf24'];
 
-function Pod({ pod, occupancy }) {
+function Pod({ pod, occupancy, seats }) {
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[pod.x, 0.012, pod.z]} receiveShadow>
@@ -132,7 +149,7 @@ function Pod({ pod, occupancy }) {
                 </mesh>
               ))}
               <group position={[0, 0.82, d.ry === 0 ? -0.05 : 0.05]} rotation={[0, d.ry === 0 ? Math.PI : 0, 0]}>
-                <Laptop active={status} />
+                <Laptop active={status} agentId={seats[d.id]} />
               </group>
               {i % 3 === 0 && (
                 <mesh position={[0.65, 0.88, 0]} castShadow>
@@ -298,7 +315,7 @@ export function Office() {
       </Html>
 
       {PODS.map((pod) => (
-        <Pod key={pod.id} pod={pod} occupancy={occupancy} />
+        <Pod key={pod.id} pod={pod} occupancy={occupancy} seats={desks} />
       ))}
 
       <Stairs />
