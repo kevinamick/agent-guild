@@ -8,6 +8,7 @@ import { canUseAgent, requestAccess, AgentAccess } from './Access.jsx';
 import { AreaPicker } from './AreaPicker.jsx';
 import { kindFromPrompt } from '../../../shared/worktype.js';
 import { noteColor } from './noteColors.js';
+import { openRecap } from './Recap.jsx';
 import {
   SKILLS, SKILL_INFO, COSMETICS, progress, playbookCapacity, turnXp, KUDOS_XP,
 } from '../../../shared/progression.js';
@@ -617,6 +618,9 @@ export function HelpModal() {
           <kbd>V</kbd><span>first-person view (🎥 / 👁️): click the view to look around with the mouse, Esc to let go; WASD walks where you look</span>
           <kbd>Ctrl ]</kbd><span>step away from a terminal</span>
         </div>
+        <p className="help-recap">
+          📰 Been away? <button className="btn small-btn" onClick={openRecap}>See what happened while you were away</button>
+        </p>
         <h4>Leveling</h4>
         <p>Agents earn XP in the skill a task belongs to: 📌 Issue Fixer, 🔍 Reviewer, 🔀 Conflict Resolver or 🧰 Generalist. A finished task pays for tool calls and focus time, with bonuses for opening, reviewing and merging PRs. For example, a 4-minute fix with 12 tool calls that opens a PR earns <b>{sample.amount} XP</b>.</p>
         <p><b>Levels make agents stronger.</b> After each task, an agent writes what it learned into its per-skill <i>playbook</i>, and that playbook is injected into every session it starts. Higher skill levels let it keep more lessons, so a Lv 8 Reviewer brings 19 learned lessons about your repo to a review, while a new recruit brings none. Levels also unlock hats, an aura and a crown.</p>

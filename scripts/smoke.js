@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Self-contained end-to-end test: starts a server and two runners (Kevin, Alice)
 // using scripts/fake-agent.js, drives them over the real protocol, restarts the
-// server mid-session, and checks that agents survive.
+// server mid-session, and checks that agents survive. The "while you were away"
+// threshold is 2 seconds here so a recap can be tested without waiting an hour.
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,7 +32,7 @@ function start(args, name) {
   return p;
 }
 const startServer = () =>
-  start(['server/index.js', '--port', String(PORT), '--data', path.join(TMP, 'data'), '--admin', 'Kevin', '--admin-key', KEYS.Kevin, '--seed', `Alice=${KEYS.Alice}`], 'server');
+  start(['server/index.js', '--port', String(PORT), '--data', path.join(TMP, 'data'), '--admin', 'Kevin', '--admin-key', KEYS.Kevin, '--seed', `Alice=${KEYS.Alice}`, '--recap-after', '2'], 'server');
 const startRunner = (who) =>
   start(['runner/index.js', '--server', SERVER, '--key', KEYS[who], '--repo-dir', repo, '--home', path.join(TMP, who), '--agent-cmd', path.join(ROOT, 'scripts/fake-agent.js')], who);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -359,6 +360,61 @@ async function main() {
   kevin2.send({ t: 'access-revoke', agentId, name: 'alice' });
   await alice3.wait((m) => m.t === 'event' && m.kind === 'toast' && /took back your access/.test(m.text), 'revoked');
   check(true, "an 'always' grant sticks until the owner takes it back");
+
+  // --- while you were away: Kevin leaves, his agent works, Alice asks for it, Kevin comes back
+  const lessonsBefore = agentIn(kevin2, agentId).lessons?.issue || 0;
+  kevin2.send({ t: 'hire', deskId: 7, agentId, task: { text: 'fix issue #5 and open a pr', kind: 'issue' }, worktree: false });
+  await kevin2.wait((m) => m.t === 'state' && agentIn(m, agentId)?.status === 'working', 'working on #5');
+  kevin2.ws.close();
+  const leftAt = Date.now();
+  await alice3.wait((m) => m.t === 'state' && !m.state.players.some((p) => p.name === 'Kevin'), 'Kevin left');
+  alice3.send({ t: 'access-request', agentId });
+  const awayXp = await alice3.wait((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === agentId && m.skill === 'issue', 'work while Kevin is away', 20000);
+  await alice3.wait((m) => m.t === 'state' && (agentIn(m, agentId)?.lessons?.issue || 0) > lessonsBefore, 'lesson while away');
+  await sleep(Math.max(0, 2300 - (Date.now() - leftAt)));
+  const kevin3 = player(KEYS.Kevin);
+  await kevin3.ready;
+  const { recap } = await kevin3.wait((m) => m.t === 'recap' && m.arrival, 'recap on arrival');
+  const row = recap.agents[0];
+  check(recap.totals.tasks === 1 && recap.totals.prsOpened === 1 && recap.totals.xp === awayXp.amount && recap.totals.accessRequests === 1,
+    `Kevin walks back in to a recap: 1 task, 1 PR opened, ${awayXp.amount} XP, 1 access request`);
+  check(row?.id === agentId && row.mine && row.xp.issue === awayXp.amount && row.lessonsTotal >= 1 && row.tasksDone[0]?.summary === 'fix issue #5 and open a pr',
+    'the recap lists his agent first, with its XP per skill, lessons learned and what the task was');
+  check(recap.highlights.requests.length === 1 && recap.highlights.requests[0].from === 'Alice', "Alice's request is waiting for him in the recap");
+  const board = kevin3.events.find((m) => m.t === 'digest');
+  check(board?.digest.tasks >= 2 && board.digest.prsOpened >= 2 && board.digest.top[0]?.xp > 0, "the Guild Hall board's Last 24h panel gets the office-wide numbers");
+  alice3.send({ t: 'recap', hours: 1 });
+  const aliceRecap = await alice3.wait((m) => m.t === 'recap' && !m.arrival, 'recap on request');
+  check(!aliceRecap.arrival && aliceRecap.recap.totals.tasks >= 1 && !aliceRecap.recap.agents[0]?.mine, 'anyone can reopen a recap for the last hours; Alice sees it is not her agent');
+  const noRecapYet = player(KEYS.Alice); // a new tab: she never left, so no recap
+  await noRecapYet.ready;
+  await noRecapYet.wait((m) => m.t === 'welcome', 'alice new tab');
+  await sleep(300);
+  check(!noRecapYet.events.some((m) => m.t === 'recap') && !dana.events.some((m) => m.t === 'recap'), 'no recap in a new tab (she never left), nor for a newcomer (Dana)');
+  kevin3.send({ t: 'access-decide', id: recap.highlights.requests[0].id, decision: 'deny' });
+
+  // The log and last-seen times survive a restart (SIGTERM writes what's pending).
+  server.kill('SIGTERM');
+  await new Promise((r) => server.once('exit', r));
+  const saved = JSON.parse(fs.readFileSync(path.join(TMP, 'data', 'activity.json'), 'utf8'));
+  check(saved.some((e) => e.type === 'task' && e.summary === 'fix issue #5 and open a pr'), 'the activity log is on disk after shutdown');
+  server = startServer();
+  await serverUp();
+  const downAt = Date.now();
+  const kevin4 = player(KEYS.Kevin);
+  await kevin4.ready;
+  await kevin4.wait((m) => m.t === 'state' && agentIn(m, agentId)?.deskId, 'agent back after the second restart', 25000);
+  kevin4.send({ t: 'recap', hours: 2 });
+  const afterRestart = (await kevin4.wait((m) => m.t === 'recap' && !m.arrival, 'recap after restart')).recap;
+  check(afterRestart.agents.find((a) => a.id === agentId)?.prsOpened >= 2, 'after a restart the recap still has the work from before it');
+  kevin4.send({ t: 'prompt', agentId, text: 'tidy up the readme', kind: 'general' });
+  await kevin4.wait((m) => m.t === 'event' && m.kind === 'xp' && m.agentId === agentId && m.skill === 'general', 'work after restart', 20000);
+  await sleep(Math.max(0, 2300 - (Date.now() - downAt)));
+  const alice4 = player(KEYS.Alice);
+  await alice4.ready;
+  const back = (await alice4.wait((m) => m.t === 'recap' && m.arrival, 'alice recap after restart')).recap;
+  check(back.totals.tasks === 1 && back.agents[0]?.tasksDone[0]?.summary === 'tidy up the readme',
+    "Alice's last-seen time survived the restart: her recap starts when she left, not at the beginning");
   await sleep(300);
 }
 

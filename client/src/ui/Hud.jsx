@@ -9,6 +9,7 @@ import { SoundButton } from './Sound.jsx';
 import { VoiceButton, VoicePanel, VoiceBadge } from './Voice.jsx';
 import { TvPrompt } from './TvPrompt.jsx';
 import { ViewToggle } from './ViewToggle.jsx';
+import { RecapButton } from './Recap.jsx';
 
 export function XpBar({ xp, color = '#a855f7', thin }) {
   const p = progress(xp);
@@ -58,6 +59,7 @@ export function TopRight() {
         <button className="btn" onClick={() => openModal({ type: 'board', kind: 'issues' })}>📌 {host.issuesLabel}</button>
         <button className="btn" onClick={() => openModal({ type: 'board', kind: 'prs' })}>🔀 PRs</button>
         <button className="btn" onClick={() => openModal({ type: 'team' })}>👥 Team</button>
+        <RecapButton />
         <button className="btn" onClick={() => openModal({ type: 'help' })}>?</button>
         <ViewToggle />
         <VoiceButton />
